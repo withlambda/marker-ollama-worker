@@ -1,6 +1,7 @@
-# Use a PyTorch base image optimized for RunPod
-# This image includes CUDA 12.1.1, Python 3.10, and PyTorch 2.2.0
-FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel
+# Use the official PyTorch base image
+# This image includes CUDA 12.1, Python 3.10 (or similar), and PyTorch 2.2.0
+# We use the devel version to ensure we have necessary build tools if needed.
+FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-devel
 
 # Set environment variables to avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
