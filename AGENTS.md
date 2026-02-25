@@ -16,6 +16,17 @@ This file controls the general behavior of the agent for this project.
         - **Ask the user** if they wish for the agent to resolve the problem.
     - Only proceed with corrective actions after receiving explicit confirmation.
 
+## Code Quality and Documentation
+
+When generating or modifying code, the agent must ensure that:
+1.  **Documentation**: All functions, classes, and complex logic blocks are well-documented with comments explaining their purpose and behavior.
+2.  **Clarity**: Variable and function names should be descriptive and follow standard naming conventions for the language being used.
+3.  **Maintainability**: Code should be structured logically to facilitate future updates and debugging.
+4.  **Project Documentation**:
+    - The `README.md` file must be kept up-to-date with every significant change.
+    - It should clearly state the project's purpose, installation steps, usage instructions, and deployment details.
+    - When executing prompts that modify the system's behavior or configuration, the agent must review and update `README.md` to reflect these changes.
+
 ## Custom Commands
 
 ### `/exec-prompt <prompt_name>`
