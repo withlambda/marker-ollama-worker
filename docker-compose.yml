@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  marker-pdf:
+    build: .
+    image: marker-pdf-ollama:latest
+    container_name: marker-pdf-ollama
+    environment:
+      - STORAGE_BUCKET_PATH=/workspace
+      - INPUT_DIR=input
+      - OUTPUT_DIR=output
+      - OLLAMA_MODEL=llama3
+      - OLLAMA_MODELS_DIR=/root/.ollama/models
+      - MARKER_WORKERS=2
+      - MARKER_PAGINATE_OUTPUT=false
+      - MARKER_USE_LLM=true
+      - MARKER_FORCE_OCR=false
+      # - MARKER_BLOCK_CORRECTION_PROMPT="Your custom prompt here"
+      # - CUDA_VISIBLE_DEVICES=0 # Uncomment if you have a GPU
+    volumes:
+      - ./test_data/input:/workspace/input
+      - ./test_data/output:/workspace/output
+      - ./ollama_models:/root/.ollama/models # Mount a volume for persistent models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
