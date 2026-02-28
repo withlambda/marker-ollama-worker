@@ -1,62 +1,14 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status.
 set -e
 
-# --- Configuration ---
+# --- if env OLLAMA_MODEL is specified, assume to pull the Ollama model ---
 
-# Check that required environment variables are available
+if [ -n "${OLLAMA_MODEL}" ]; then
+  return
+fi
 
-# Root path of network volume
-: "${VOLUME_ROOT_MOUNT_PATH:?The variable VOLUME_ROOT_MOUNT_PATH must be defined}"
-
-# Hugging Face model name, e.g: Qwen/Qwen3-VL-8B-Thinking-GGUF
-: "${HUGGING_FACE_MODEL_NAME:?The variable HUGGING_FACE_MODEL_NAME must be defined}"
-
-#  Hugging face model quantization
-: "${HUGGING_FACE_MODEL_QUANTIZATION:?The variable HUGGING_FACE_MODEL_QUANTIZATION must be defined}"
-
-# Hugging face cache dir relative to "${VOLUME_ROOT_MOUNT_PATH}", defaults to /huggingface-cache/hub
-HUGGING_FACE_CACHE_DIR=${HUGGING_FACE_CACHE_DIR:-"/huggingface-cache/hub"}
-
-# Set default values for environment variables if not provided
-# These are defaults; the handler can override them via job input.
-export OLLAMA_MODELS_DIR=${OLLAMA_MODELS_DIR:-"/.ollama/models"}
-
-# --- 1. Configure Ollama ---
-
-# Set the OLLAMA_MODELS environment variable so Ollama knows where to store/find models.
-# This allows us to point to a mounted volume (e.g., from a storage bucket).
-export OLLAMA_MODELS="${VOLUME_ROOT_MOUNT_PATH}${OLLAMA_MODELS_DIR}"
-
-# Ensure the models directory exists.
-# If it's a mounted volume, this might already exist, but mkdir -p is safe.
-mkdir -p "$OLLAMA_MODELS"
-
-# --- 2. Start Ollama ---
-
-echo "Starting Ollama service..."
-# Start Ollama in the background. It will use OLLAMA_MODELS env var.
-ollama serve &
-OLLAMA_PID=$!
-
-# --- 3. Health Check ---
-
-echo "Waiting for Ollama to start..."
-MAX_RETRIES=30
-RETRY_COUNT=0
-until curl -s localhost:11434 > /dev/null; do
-    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "Error: Ollama failed to start after $MAX_RETRIES attempts."
-        exit 1
-    fi
-    echo "Waiting for Ollama... ($RETRY_COUNT/$MAX_RETRIES)"
-    sleep 2
-    ((RETRY_COUNT++))
-done
-echo "Ollama is up and running!"
-
-# --- 4. build Ollama model from hugging face model ---
+# --- else build Ollama model from hugging face model ---
 
 # Construct the base path for the Hugging Face model cache
 # Replace '/' with '--' in the model name to match HF cache structure
@@ -148,13 +100,3 @@ if ! ollama list | grep -q "${OLLAMA_MODEL}"; then
 else
   echo "Ollama model '${OLLAMA_MODEL}' already exists. Skipping creation."
 fi
-
-# --- 5. Start Handler ---
-
-echo "Starting RunPod Handler..."
-# Execute the Python handler script.
-# -u ensures unbuffered output so logs appear immediately.
-python3 -u /handler.py
-
-# Note: The handler script calls runpod.serverless.start(), which blocks.
-# If the handler exits, the container should exit.

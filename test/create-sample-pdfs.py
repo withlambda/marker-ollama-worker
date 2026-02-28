@@ -19,8 +19,9 @@ def main():
     """
     Main function to generate sample PDF files for testing.
     """
-    # Define the output directory
-    output_dir = "test_data/input"
+    # Define the output directory as the input dir for the further marker-pdf
+    # processing
+    output_dir = os.environ['TEST_INPUT_DIR']
 
     # Create the directory if it doesn't exist
     if not os.path.exists(output_dir):
