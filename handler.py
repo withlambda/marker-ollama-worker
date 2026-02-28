@@ -1,8 +1,6 @@
 import runpod
 import os
 import subprocess
-import json
-import time
 import requests
 from pathlib import Path
 
@@ -41,7 +39,7 @@ class TextProcessor:
     def to_lower(self):
         return str(self.value).lower()
 
-    def isParsableAsInt(self):
+    def is_parseable_as_int(self):
         try:
             int(self.value)
             return True
@@ -56,8 +54,8 @@ def check_is_not_file(path: str):
     if os.path.isfile(path):
         raise ValueError(f"Path '{path}' is a file.")
 
-def check_no_subdirs(path):
-	subdir_count = sum(1 for item in os.listdir(path) if os.path.isdir(os.path.join(path, item)))
+def check_no_subdirs(path: str):
+    subdir_count=sum(1 for entry in os.scandir(path) if entry.is_dir())
 
     if subdir_count > 0:
         raise ValueError(f"Path '{path}' contains subdirectories.")
@@ -113,7 +111,7 @@ def handler(job):
 
     marker_workers = job_input.get('marker_workers', "")
     if marker_workers:
-        TextProcessor(marker_workers).isParsableAsInt()
+        TextProcessor(marker_workers).is_parseable_as_int()
 
     marker_paginate_output = TextProcessor(job_input.get('marker_paginate_output', "False")).to_lower()
     marker_use_llm = TextProcessor(job_input.get('marker_use_llm', "False")).to_lower()
