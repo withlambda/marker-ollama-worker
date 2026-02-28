@@ -5,35 +5,38 @@ set -e
 
 # --- Configuration ---
 
+# Check that required environment variables are available
+
+# Root path of network volume
+: "${VOLUME_ROOT_MOUNT_PATH:?The variable VOLUME_ROOT_MOUNT_PATH must be defined}"
+
+# Hugging Face model name, e.g: Qwen/Qwen3-VL-8B-Thinking-GGUF
+: "${HUGGING_FACE_MODEL_NAME:?The variable HUGGING_FACE_MODEL_NAME must be defined}"
+
+#  Hugging face model quantization
+: "${HUGGING_FACE_MODEL_QUANTIZATION:?The variable HUGGING_FACE_MODEL_QUANTIZATION must be defined}"
+
+# Hugging face cache dir relative to "${VOLUME_ROOT_MOUNT_PATH}", defaults to /huggingface-cache/hub
+HUGGING_FACE_CACHE_DIR=${HUGGING_FACE_CACHE_DIR:-"/huggingface-cache/hub"}
+
 # Set default values for environment variables if not provided
-STORAGE_BUCKET_PATH=${STORAGE_BUCKET_PATH:-"/workspace"}
-INPUT_DIR=${INPUT_DIR:-"input"}
-OUTPUT_DIR=${OUTPUT_DIR:-"output"}
-OLLAMA_MODEL=${OLLAMA_MODEL:-"llama3"}
-OLLAMA_MODELS_DIR=${OLLAMA_MODELS_DIR:-"/root/.ollama/models"}
-
-# Construct absolute paths
-INPUT_PATH="${STORAGE_BUCKET_PATH}/${INPUT_DIR}"
-OUTPUT_PATH="${STORAGE_BUCKET_PATH}/${OUTPUT_DIR}"
-
-echo "--- Starting Marker-PDF with Ollama ---"
-echo "Storage Bucket Path: $STORAGE_BUCKET_PATH"
-echo "Input Directory: $INPUT_PATH"
-echo "Output Directory: $OUTPUT_PATH"
-echo "Ollama Model: $OLLAMA_MODEL"
-echo "Ollama Models Directory: $OLLAMA_MODELS_DIR"
+# These are defaults; the handler can override them via job input.
+export OLLAMA_MODELS_DIR=${OLLAMA_MODELS_DIR:-"/.ollama/models"}
 
 # --- 1. Configure Ollama ---
 
 # Set the OLLAMA_MODELS environment variable so Ollama knows where to store/find models.
-export OLLAMA_MODELS="$OLLAMA_MODELS_DIR"
+# This allows us to point to a mounted volume (e.g., from a storage bucket).
+export OLLAMA_MODELS="${VOLUME_ROOT_MOUNT_PATH}${OLLAMA_MODELS_DIR}"
 
-# Ensure the models directory exists
-mkdir -p "$OLLAMA_MODELS_DIR"
+# Ensure the models directory exists.
+# If it's a mounted volume, this might already exist, but mkdir -p is safe.
+mkdir -p "$OLLAMA_MODELS"
 
 # --- 2. Start Ollama ---
 
 echo "Starting Ollama service..."
+# Start Ollama in the background. It will use OLLAMA_MODELS env var.
 ollama serve &
 OLLAMA_PID=$!
 
@@ -53,107 +56,105 @@ until curl -s localhost:11434 > /dev/null; do
 done
 echo "Ollama is up and running!"
 
-# --- 4. Pull Model ---
+# --- 4. build Ollama model from hugging face model ---
 
-echo "Checking for model: $OLLAMA_MODEL"
-# Check if the model is already pulled.
-# 'ollama list' outputs a list of models. We grep for the model name.
-# We use '|| true' to prevent set -e from exiting if grep finds nothing.
-if ollama list | grep -q "$OLLAMA_MODEL"; then
-    echo "Model $OLLAMA_MODEL already exists locally."
-else
-    echo "Model $OLLAMA_MODEL not found locally. Pulling..."
-    ollama pull "$OLLAMA_MODEL"
-    echo "Model $OLLAMA_MODEL pulled successfully."
-fi
+# Construct the base path for the Hugging Face model cache
+# Replace '/' with '--' in the model name to match HF cache structure
+HF_MODEL_BASE_DIR_PATH="${VOLUME_ROOT_MOUNT_PATH}${HUGGING_FACE_CACHE_DIR}/models--${HUGGING_FACE_MODEL_NAME/\//--}"
 
-# --- 5. Construct Command Arguments ---
-
-# Use a bash array for arguments to handle spaces and quoting correctly
-MARKER_ARGS=()
-
-# Add optional arguments based on environment variables
-if [ -n "$MARKER_BLOCK_CORRECTION_PROMPT" ]; then
-    MARKER_ARGS+=(--block_correction_prompt "$MARKER_BLOCK_CORRECTION_PROMPT")
-fi
-
-if [ -n "$MARKER_WORKERS" ]; then
-    MARKER_ARGS+=(--workers "$MARKER_WORKERS")
-fi
-
-if [ "$MARKER_PAGINATE_OUTPUT" = "true" ]; then
-    MARKER_ARGS+=(--paginate_output)
-fi
-
-if [ "$MARKER_USE_LLM" = "true" ]; then
-    MARKER_ARGS+=(--use_llm)
-fi
-
-if [ "$MARKER_FORCE_OCR" = "true" ]; then
-    MARKER_ARGS+=(--force_ocr)
-fi
-
-# Add the Ollama model argument
-MARKER_ARGS+=(--ollama_model "$OLLAMA_MODEL")
-
-echo "Marker command arguments: ${MARKER_ARGS[*]}"
-
-# --- 6. Execute Processing ---
-
-# Check if input directory exists
-if [ ! -d "$INPUT_PATH" ]; then
-    echo "Error: Input directory $INPUT_PATH does not exist."
+# Check if the model directory exists
+if [ ! -d "$HF_MODEL_BASE_DIR_PATH" ]; then
+    echo "Error: Hugging Face model directory not found at $HF_MODEL_BASE_DIR_PATH"
     exit 1
 fi
 
-# Create output directory if it doesn't exist
-mkdir -p "$OUTPUT_PATH"
+# Get the specific revision (snapshot)
+if [ -f "$HF_MODEL_BASE_DIR_PATH/refs/main" ]; then
+    REF=$(head -n 1 "$HF_MODEL_BASE_DIR_PATH/refs/main")
+    HF_MODEL_SNAPSHOT_PATH="${HF_MODEL_BASE_DIR_PATH}/snapshots/${REF}"
+else
+    # Fallback if refs/main doesn't exist (e.g., manual download or different structure)
+    # This assumes there is only one snapshot or we take the first one found.
+    # A more robust solution might be needed depending on how the cache is populated.
+    HF_MODEL_SNAPSHOT_PATH=$(find "${HF_MODEL_BASE_DIR_PATH}/snapshots" -maxdepth 1 -mindepth 1 -type d | head -n 1)
+    if [ -z "$HF_MODEL_SNAPSHOT_PATH" ]; then
+         echo "Error: No snapshot found in ${HF_MODEL_BASE_DIR_PATH}/snapshots"
+         exit 1
+    fi
+fi
 
-echo "Processing files in $INPUT_PATH..."
+echo "Using model snapshot at: ${HF_MODEL_SNAPSHOT_PATH}"
 
-# Iterate over PDF files in the input directory
-# We use a while loop with find to handle filenames with spaces correctly
-find "$INPUT_PATH" -name "*.pdf" -print0 | while IFS= read -r -d '' file; do
-    echo "Processing file: $file"
+cd "${HF_MODEL_SNAPSHOT_PATH}"
 
-    # Calculate relative path to maintain directory structure
-    REL_PATH="${file#$INPUT_PATH/}"
-    REL_DIR=$(dirname "$REL_PATH")
+HF_MODEL_FILE_NAME=""
+HF_MODEL_ADAPTER_FILE_NAME=""
 
-    # Create corresponding output directory
-    CURRENT_OUTPUT_DIR="$OUTPUT_PATH/$REL_DIR"
-    mkdir -p "$CURRENT_OUTPUT_DIR"
+# Iterate over files matching the quantization pattern
+# Using find instead of shell globbing for better control and to avoid issues if no files match
+# We look for .gguf files containing the quantization string
+# Note: The original script checked for symlinks (-L). We'll keep that logic if that's how the cache is structured,
+# but usually in snapshots they are actual files or symlinks to blobs.
+# We will iterate over all files matching the pattern.
 
-    # Run marker-pdf on the single file
-    # We execute the command directly without eval
-    echo "Running: marker_single \"$file\" \"$CURRENT_OUTPUT_DIR\" ${MARKER_ARGS[*]}"
+for file in *"${HUGGING_FACE_MODEL_QUANTIZATION}"*.gguf; do
+    # Check if file exists to handle case where glob returns the pattern itself if no matches
+    [ -e "$file" ] || continue
 
-    # Temporarily disable set -e for the command execution to handle errors manually
-    set +e
-    marker_single "$file" "$CURRENT_OUTPUT_DIR" "${MARKER_ARGS[@]}"
-    EXIT_CODE=$?
-    set -e
-
-    if [ $EXIT_CODE -eq 0 ]; then
-        echo "Successfully processed: $file"
-        # --- 7. Cleanup ---
-        echo "Deleting original file: $file"
-        rm "$file"
+    if [[ "$file" == *mmproj* ]]; then
+        HF_MODEL_ADAPTER_FILE_NAME="$file"
     else
-        echo "Error processing file: $file. Exit code: $EXIT_CODE"
-        # Do not delete the file if processing failed
+        HF_MODEL_FILE_NAME="$file"
     fi
 done
 
-echo "All files processed."
+cd - > /dev/null
 
-# --- 8. Shutdown ---
-
-echo "Stopping Ollama..."
-# Check if process is still running before killing
-if kill -0 $OLLAMA_PID 2>/dev/null; then
-    kill $OLLAMA_PID
+# Check the hugging face model is available in the hugging face cache.
+if [ -z "$HF_MODEL_FILE_NAME" ]; then
+    echo "Error: The desired hugging face model file matching quantization '${HUGGING_FACE_MODEL_QUANTIZATION}' was not found in ${HF_MODEL_SNAPSHOT_PATH}"
+    exit 1
 fi
 
-echo "Exiting container."
-exit 0
+# Define the Ollama model name (remove extension)
+export OLLAMA_MODEL="${HF_MODEL_FILE_NAME%.gguf}"
+echo "Ollama Model Name: ${OLLAMA_MODEL}"
+
+# only build the model for ollama if not already present
+if ! ollama list | grep -q "${OLLAMA_MODEL}"; then
+
+  echo "Building Ollama model '${OLLAMA_MODEL}'..."
+
+  FULL_HF_MODEL_PATH="${HF_MODEL_SNAPSHOT_PATH}/${HF_MODEL_FILE_NAME}"
+
+  # Prepare the Modelfile content
+  # We use a temporary file for the Modelfile to avoid complex escaping issues with heredocs inside variables
+  MODELFILE_PATH="Modelfile.${OLLAMA_MODEL}"
+
+  echo "FROM ${FULL_HF_MODEL_PATH}" > "$MODELFILE_PATH"
+
+  if [ -n "$HF_MODEL_ADAPTER_FILE_NAME" ]; then
+      FULL_HF_MODEL_ADAPTER_PATH="${HF_MODEL_SNAPSHOT_PATH}/${HF_MODEL_ADAPTER_FILE_NAME}"
+      echo "ADAPTER ${FULL_HF_MODEL_ADAPTER_PATH}" >> "$MODELFILE_PATH"
+  fi
+
+  # Create the model using the Modelfile
+  ollama create "${OLLAMA_MODEL}" -f "$MODELFILE_PATH"
+
+  # Cleanup
+  rm "$MODELFILE_PATH"
+
+  echo "Ollama model '${OLLAMA_MODEL}' created successfully."
+else
+  echo "Ollama model '${OLLAMA_MODEL}' already exists. Skipping creation."
+fi
+
+# --- 5. Start Handler ---
+
+echo "Starting RunPod Handler..."
+# Execute the Python handler script.
+# -u ensures unbuffered output so logs appear immediately.
+python3 -u /handler.py
+
+# Note: The handler script calls runpod.serverless.start(), which blocks.
+# If the handler exits, the container should exit.
