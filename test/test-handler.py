@@ -18,12 +18,15 @@ def test_handler():
     """
     print("--- Starting Local Handler Test ---")
 
+    input_dir="input"
+    output_dir="output"
+
     # Define a sample job payload
     # This mimics the structure RunPod sends to the handler
     job = {
         "input": {
-            "input_dir": "input", # Process the entire input directory
-            "output_dir": "output",
+            "input_dir": input_dir, # Process the entire input directory
+            "output_dir": output_dir,
             "marker_workers": 0,
             "marker_paginate_output": True,
             "marker_use_llm": True,
@@ -40,7 +43,12 @@ def test_handler():
         print("\n--- Handler Result ---")
         print(json.dumps(result, indent=2))
 
-        if result.get("status") == "completed":
+        storage_bucket_path = os.environ.get('VOLUME_ROOT_MOUNT_PATH')
+
+        input_path=f"{storage_bucket_path}/{input_dir}"
+
+        if result.get("status") == "completed" \
+                and result.get("message") == f"All input files of {input_path} processed.":
             print("\nSUCCESS: Handler completed successfully.")
 
         else:

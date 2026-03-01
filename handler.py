@@ -203,7 +203,7 @@ def handler(job):
             file.unlink()  # This deletes the file
 
     return {
-        "status": "success",
+        "status": "completed",
         "message": f"All input files of {input_path} processed."
     }
 
