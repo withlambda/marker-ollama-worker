@@ -102,3 +102,7 @@ When the user issues the command `/update-readme`, the agent must:
     - What the repository does.
     - How to test the code.
     - Any other important information for using the repository.
+
+## License
+
+[GNU General Public License v3.0](LICENSE)

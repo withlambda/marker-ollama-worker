@@ -10,3 +10,9 @@
 
 # build dir
 /build
+
+# exclude .env files
+**/*.env
+
+# models dir
+/models

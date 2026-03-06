@@ -68,3 +68,7 @@ Generate the following files:
 3.  `handler.py`: The RunPod serverless handler logic.
 4.  `docker-compose.yml`: For local testing (simulating the serverless environment).
 5.  `README.md`: Updated with RunPod Serverless deployment instructions and expected JSON input format.
+
+## License
+
+[GNU General Public License v3.0](../LICENSE)

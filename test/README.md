@@ -37,3 +37,7 @@ This directory contains scripts and configuration files to test the Dockerized M
 *   `docker-compose.test.yml`: Docker Compose configuration for testing (CPU-only).
 *   `run.sh`: Shell script to execute the test.
 *   `README.md`: This file.
+
+## License
+
+[GNU General Public License v3.0](../LICENSE)

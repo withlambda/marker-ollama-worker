@@ -6,6 +6,20 @@ Generate the file `test/run.sh` with the exact content provided below.
 ## Content
 ```bash
 #!/bin/bash
+# Copyright (C) 2026 withLambda
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Script to run local tests for the Dockerized Marker-PDF solution (RunPod Serverless).
 
@@ -62,7 +76,7 @@ echo "Building Docker image..."
 docker build \
   -f Dockerfile \
   --build-arg STAGE="TEST" \
-  --build-arg BASE_IMAGE="python:3.12-slim" \
+  --build-arg BASE_IMAGE="python:3.11-slim" \
   -t  ${DOCKER_CONTAINER} .
 
 if [ $? -ne 0 ]; then
@@ -91,17 +105,10 @@ docker run --rm \
   -e "OCR_ENGINE=none" \
   -e "OLLAMA_BASE_URL=http://127.0.0.1:11434" \
   -v "${HOME}/.ollama/:/v/.ollama/" \
-  -v "./${TEST_INPUT_DIR}:/v/input" \
-  -v "./${TEST_OUTPUT_DIR}:/v/output" \
+  -v "$(pwd)/${TEST_INPUT_DIR}:/v/input" \
+  -v "$(pwd)/${TEST_OUTPUT_DIR}:/v/output" \
   -it \
   ${DOCKER_CONTAINER}
-
-
-exit 0
-# We use 'up' to start the container. The entrypoint in docker-compose.test.yml
-# is overridden to run the entrypoint script (start Ollama) and then run the test script.
-# We use --abort-on-container-exit to stop if the test script exits.
-docker-compose -f "$DOCKER_COMPOSE_FILE" up --abort-on-container-exit
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then

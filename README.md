@@ -112,4 +112,4 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## License
 
-[MIT License](LICENSE)
+[GNU General Public License v3.0](LICENSE)

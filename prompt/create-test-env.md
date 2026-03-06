@@ -38,3 +38,7 @@ Generate the following files:
 3.  `test_handler.py`: A Python script that imports the handler function (or mocks the event loop) and calls it with a sample job payload to verify processing.
 4.  `run_test.sh`: Shell script to execute the test (build image, run `test_handler.py` inside container).
 5.  `README_TEST.md`: Instructions on how to use the testing environment.
+
+## License
+
+[GNU General Public License v3.0](../LICENSE)

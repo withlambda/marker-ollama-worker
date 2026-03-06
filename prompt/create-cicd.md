@@ -33,3 +33,7 @@ The workflow should:
 ## Output
 Generate the following file:
 1.  `.github/workflows/docker-publish.yml`: The complete, ready-to-use GitHub Actions workflow file.
+
+## License
+
+[GNU General Public License v3.0](../LICENSE)

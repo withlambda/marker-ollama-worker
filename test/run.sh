@@ -1,12 +1,35 @@
 #!/bin/bash
+# Copyright (C) 2026 withLambda
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Script to run local tests for the Dockerized Marker-PDF solution (RunPod Serverless).
 
 
 # --- Configuration ---
 
-# set the roor dir to the build/test dir
-BUILD_TEST_DIR="../build/test"
+# set variables
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+PARENT_OF_SCRIPT_DIR=$(dirname -- "${SCRIPT_DIR}")
+
+BUILD_TEST_DIR="${PARENT_OF_SCRIPT_DIR}/build/test"
+export TEST_INPUT_DIR="${BUILD_TEST_DIR}/test-data/input"
+export TEST_OUTPUT_DIR="${BUILD_TEST_DIR}/test-data/output"
+
+DOCKER_CONTAINER="marker-with-ollama-test"
+OLLAMA_MODEL="smollm:135m"
+
 rm -rf "${BUILD_TEST_DIR}" && mkdir -p "${BUILD_TEST_DIR}"
 
 cp ./*.txt \
@@ -17,29 +40,21 @@ cp ./*.txt \
   ../handler.py "${BUILD_TEST_DIR}"
 cp -r ../entrypoint "${BUILD_TEST_DIR}"
 
-cd "${BUILD_TEST_DIR}" || exit 1
-
 pip install -r requirements-setup.txt
 
-export TEST_INPUT_DIR="test-data/input"
-export TEST_OUTPUT_DIR="test-data/output"
+rm -rf "${TEST_INPUT_DIR}"
+rm -rf "${TEST_OUTPUT_DIR}"
 
-DOCKER_CONTAINER="marker-with-ollama-test"
-
-rm -rf $TEST_INPUT_DIR
-rm -rf $TEST_OUTPUT_DIR
-
-mkdir -p $TEST_INPUT_DIR
-mkdir -p $TEST_OUTPUT_DIR
+mkdir -p "${TEST_INPUT_DIR}"
+mkdir -p "${TEST_OUTPUT_DIR}"
 
 # --- 1. Check for Sample PDFs ---
 
-echo "Checking for sample PDFs in $TEST_INPUT_DIR..."
+echo "Checking for sample PDFs in ${TEST_INPUT_DIR}..."
 
-if [ ! -d "$TEST_INPUT_DIR" ] || [ -z "$(ls -A "$TEST_INPUT_DIR")" ]; then
+if [ ! -d "${TEST_INPUT_DIR}" ] || [ -z "$(ls -A "${TEST_INPUT_DIR}")" ]; then
     echo "Sample PDFs not found. Generating them..."
-    python3 create-sample-pdfs.py
-    if [ $? -ne 0 ]; then
+    if ! python3 create-sample-pdfs.py; then
         echo "Error: Failed to generate sample PDFs."
         exit 1
     fi
@@ -47,28 +62,24 @@ else
     echo "Sample PDFs found."
 fi
 
-
 # --- 2. Build Docker Image ---
 
 echo "Building Docker image..."
 
-docker build \
+if
+! docker build \
   -f Dockerfile \
   --build-arg STAGE="TEST" \
-  --build-arg BASE_IMAGE="python:3.12-slim" \
   -t  ${DOCKER_CONTAINER} .
-
-if [ $? -ne 0 ]; then
+then
     echo "Error: Failed to build Docker image."
     exit 1
 fi
-
 
 # --- 3. Run Container & Test Handler ---
 
 echo "Running container and executing test handler..."
 
-OLLAMA_MODEL="smollm:135m"
 
 docker run --rm \
   --name marker-ollama-test \
@@ -84,8 +95,8 @@ docker run --rm \
   -e "OCR_ENGINE=none" \
   -e "OLLAMA_BASE_URL=http://127.0.0.1:11434" \
   -v "${HOME}/.ollama/:/v/.ollama/" \
-  -v "$(pwd)/${TEST_INPUT_DIR}:/v/input" \
-  -v "$(pwd)/${TEST_OUTPUT_DIR}:/v/output" \
+  -v "${TEST_INPUT_DIR}:/v/input" \
+  -v "${TEST_OUTPUT_DIR}:/v/output" \
   -it \
   ${DOCKER_CONTAINER}
 
@@ -97,23 +108,23 @@ fi
 
 # --- 4. Verify Output ---
 
-echo "Verifying output in $TEST_OUTPUT_DIR..."
+echo "Verifying output in ${TEST_OUTPUT_DIR}..."
 
 # Check if output directory exists
-if [ ! -d "$TEST_OUTPUT_DIR" ]; then
+if [ ! -d "${TEST_OUTPUT_DIR}" ]; then
     echo "Error: Output directory not found."
     exit 1
 fi
 
 # Check for Markdown files
-MD_FILES=$(find "$TEST_OUTPUT_DIR" -name "*.md")
+MD_FILES=$(find "${TEST_OUTPUT_DIR}" -name "*.md")
 
-if [ -z "$MD_FILES" ]; then
+if [ -z "${MD_FILES}" ]; then
     echo "FAILURE: No Markdown files generated."
     exit 1
 else
     echo "SUCCESS: Markdown files generated:"
-    echo "$MD_FILES"
+    echo "${MD_FILES}"
 fi
 
 echo "Test completed successfully."

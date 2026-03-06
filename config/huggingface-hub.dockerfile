@@ -14,4 +14,3 @@ RUN mkdir -p ${HF_HOME}
 COPY download-models-from-hf.sh exec-model-download.sh functions.sh marker-models.txt ./
 
 CMD ["./download-models-from-hf.sh"]
-
