@@ -19,7 +19,7 @@ The primary purpose of the code in this directory is to automate the downloading
 *   **`exec-model-download.sh`**: The main entry point script for the user.
     *   Builds the Docker image defined in `huggingface-hub.dockerfile`.
     *   Runs the Docker container, mounting a local directory (`../../models/huggingface`) to the container's cache directory (`/app/cache/huggingface`).
-    *   Passes the `MODELS_FILE` environment variable to the container.
+    *   Passes the `MODELS_FILES` environment variable to the container.
 
 ## Usage
 

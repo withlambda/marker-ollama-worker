@@ -5,7 +5,8 @@ set -e
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 DOCKER_FILE_NAME="huggingface-hub.dockerfile"
 DOCKER_IMAGE_NAME="hf_hub"
-MODELS_FILE="marker-models.txt"
+# Files with models to download, comma separated
+MODELS_FILES="marker-models.txt,ollama-models.txt"
 PYTHON_VERSION="3.11.12"
 ENV_FILE_PATH="${SCRIPT_DIR}/.env"
 
@@ -29,6 +30,6 @@ docker build \
 
 docker run --rm \
   ${ENV_FILE_ARG} \
-  -e "MODELS_FILE=${MODELS_FILE}" \
-  -v "${GRANDPARENT_OF_SCRIPT_DIR}/models/huggingface1":/app/cache/huggingface \
+  -e "MODELS_FILES=${MODELS_FILES}" \
+  -v "${GRANDPARENT_OF_SCRIPT_DIR}/models/huggingface":/app/cache/huggingface \
   -it ${DOCKER_IMAGE_NAME}

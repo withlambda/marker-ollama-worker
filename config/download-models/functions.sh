@@ -11,8 +11,9 @@ hf_download() {
 }
 
 process_list_file() {
-    local_cmd=""
-    local_file=""
+    local local_cmd=""
+    local local_file=""
+    local OPTIND=1
 
     # Parse options
     while getopts "c:f:" opt; do

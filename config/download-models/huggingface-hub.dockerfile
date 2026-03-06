@@ -10,6 +10,6 @@ ENV HF_HOME=/app/cache/huggingface
 
 RUN mkdir -p ${HF_HOME}
 
-COPY download-models-from-hf.sh exec-model-download.sh functions.sh marker-models.txt ./
+COPY download-models-from-hf.sh exec-model-download.sh functions.sh *.txt ./
 
 CMD ["./download-models-from-hf.sh"]
