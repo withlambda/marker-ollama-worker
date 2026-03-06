@@ -1,6 +1,0 @@
-vikp/surya_det2
-vikp/surya_layout2
-vikp/surya_order
-vikp/surya_rec2
-vikp/texify2
-vikp/pdf_postprocessor_t5
