@@ -26,7 +26,7 @@ fi
 
 # Construct the base path for the Hugging Face model cache
 # Replace '/' with '--' in the model name to match HF cache structure
-HF_MODEL_BASE_DIR_PATH="${HF_HOME}/hub/models--${HUGGING_FACE_MODEL_NAME/\//--}"
+HF_MODEL_BASE_DIR_PATH="${HF_HOME}/hub/models--${OLLAMA_HUGGING_FACE_MODEL_NAME/\//--}"
 
 # Check if the model directory exists
 if [ ! -d "$HF_MODEL_BASE_DIR_PATH" ]; then
@@ -63,7 +63,7 @@ HF_MODEL_ADAPTER_FILE_NAME=""
 # but usually in snapshots they are actual files or symlinks to blobs.
 # We will iterate over all files matching the pattern.
 
-for file in *"${HUGGING_FACE_MODEL_QUANTIZATION}"*.gguf; do
+for file in *"${OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION}"*.gguf; do
     # Check if file exists to handle case where glob returns the pattern itself if no matches
     [ -e "$file" ] || continue
 
@@ -78,7 +78,7 @@ cd - > /dev/null
 
 # Check the hugging face model is available in the hugging face cache.
 if [ -z "$HF_MODEL_FILE_NAME" ]; then
-    echo "Error: The desired hugging face model file matching quantization '${HUGGING_FACE_MODEL_QUANTIZATION}' was not found in ${HF_MODEL_SNAPSHOT_PATH}"
+    echo "Error: The desired hugging face model file matching quantization '${OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION}' was not found in ${HF_MODEL_SNAPSHOT_PATH}"
     exit 1
 fi
 

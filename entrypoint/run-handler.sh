@@ -23,6 +23,7 @@ echo "Starting RunPod Handler..."
 # -u ensures unbuffered output so logs appear immediately.
 
 exec gosu appuser python3 -u "${HANDLER_FILE_NAME}"
+#python3 -u "${HANDLER_FILE_NAME}"
 
 # Note: The handler script calls runpod.serverless.start(), which blocks.
 # If the handler exits, the container should exit.

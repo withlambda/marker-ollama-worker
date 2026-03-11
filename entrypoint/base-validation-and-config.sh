@@ -21,6 +21,14 @@ set -e
 # Root path of network volume
 : "${VOLUME_ROOT_MOUNT_PATH:?The variable VOLUME_ROOT_MOUNT_PATH must be defined}"
 
+# Whether to use an LLM for post-processing the OCR output
+export USE_POSTPROCESS_LLM="${USE_POSTPROCESS_LLM:-"yes"}"
+
+if [ "${USE_POSTPROCESS_LLM}" != "yes" ] && [ "${USE_POSTPROCESS_LLM}" != "no" ]; then
+  echo "The value of the USE_POSTPROCESS_LLM environment variable must be either 'yes' or 'no'"
+  exit 1
+fi
+
 # Set the Hugging face home variable
 export HF_HOME="${HF_HOME:-"${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache"}"
 
@@ -38,13 +46,13 @@ mkdir -p "$OLLAMA_MODELS"
 
 # if OLLAMA_MODEL is not specified, then it is assumed
 # that the build should be performed from the hugging face model cache.
-if [ -z "${OLLAMA_MODEL}" ]; then
+if [ -z "${OLLAMA_MODEL}" ] && [ "${USE_POSTPROCESS_LLM}" == "yes" ]; then
 
   # Hugging Face model name, e.g: Qwen/Qwen3-VL-8B-Thinking-GGUF
-  : "${HUGGING_FACE_MODEL_NAME:?The variable HUGGING_FACE_MODEL_NAME must be defined}"
+  : "${OLLAMA_HUGGING_FACE_MODEL_NAME:?The variable OLLAMA_HUGGING_FACE_MODEL_NAME must be defined}"
 
   #  Hugging face model quantization
-  : "${HUGGING_FACE_MODEL_QUANTIZATION:?The variable HUGGING_FACE_MODEL_QUANTIZATION must be defined}"
+  : "${OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION:?The variable OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION must be defined}"
 
 fi
 

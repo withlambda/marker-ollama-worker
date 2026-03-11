@@ -16,6 +16,7 @@
 
 # Script to run local tests for the Dockerized Marker-PDF solution (RunPod Serverless).
 
+set -e
 
 # --- Configuration ---
 
@@ -32,13 +33,15 @@ OLLAMA_MODEL="smollm:135m"
 
 rm -rf "${BUILD_TEST_DIR}" && mkdir -p "${BUILD_TEST_DIR}"
 
-cp ./*.txt \
-  ./*.py \
-  .dockerignore \
-  ../Dockerfile \
-  ../requirements.txt \
-  ../handler.py "${BUILD_TEST_DIR}"
-cp -r ../entrypoint "${BUILD_TEST_DIR}"
+cp "${SCRIPT_DIR}"/*.txt \
+  "${SCRIPT_DIR}"/*.py \
+  "${SCRIPT_DIR}/.dockerignore" \
+  "${PARENT_OF_SCRIPT_DIR}/Dockerfile" \
+  "${PARENT_OF_SCRIPT_DIR}/requirements.txt" \
+  "${PARENT_OF_SCRIPT_DIR}/handler.py" "${BUILD_TEST_DIR}"
+cp -r "${PARENT_OF_SCRIPT_DIR}/entrypoint" "${BUILD_TEST_DIR}"
+
+cd "${BUILD_TEST_DIR}" || exit 1
 
 pip install -r requirements-setup.txt
 
@@ -66,11 +69,17 @@ fi
 
 echo "Building Docker image..."
 
-if
-! docker build \
-  -f Dockerfile \
-  --build-arg STAGE="TEST" \
-  -t  ${DOCKER_CONTAINER} .
+docker_build_cmd=()
+docker_build_cmd+=("docker build")
+docker_build_cmd+=("-f Dockerfile")
+docker_build_cmd+=("-t ${DOCKER_CONTAINER}")
+docker_build_cmd+=(".")
+
+echo "Docker build command:"
+echo "${docker_build_cmd[*]}"
+
+# shellcheck disable=SC2068
+if ! ${docker_build_cmd[@]}
 then
     echo "Error: Failed to build Docker image."
     exit 1
@@ -80,25 +89,57 @@ fi
 
 echo "Running container and executing test handler..."
 
+  #-e "OLLAMA_MODEL=${OLLAMA_MODEL}" \
 
-docker run --rm \
-  --name marker-ollama-test \
-  --shm-size=2gb \
-  -e "VOLUME_ROOT_MOUNT_PATH=/v" \
-  -e "HANDLER_FILE_NAME=test-handler.py" \
-  -e "OLLAMA_MODEL=${OLLAMA_MODEL}" \
-  -e "TORCH_NUM_THREADS=1" \
-  -e "TORCH_DEVICE=cpu" \
-  -e "PYTORCH_ENABLE_MPS_FALLBACK=1" \
-  -e "OMP_NUM_THREADS=1" \
-  -e "MKL_NUM_THREADS=1" \
-  -e "OCR_ENGINE=none" \
-  -e "OLLAMA_BASE_URL=http://127.0.0.1:11434" \
-  -v "${HOME}/.ollama/:/v/.ollama/" \
-  -v "${TEST_INPUT_DIR}:/v/input" \
-  -v "${TEST_OUTPUT_DIR}:/v/output" \
-  -it \
-  ${DOCKER_CONTAINER}
+  
+ # -e "DETECTOR_MODEL_CHECKPOINT=karlo0/line_det_2.20" \
+ # -e "LAYOUT_MODEL_CHECKPOINT=karlo0/surya_layout_multimodal" \
+ # -e "FOUNDATION_MODEL_CHECKPOINT=karlo0/surya_text_recognition" \
+ # -e "RECOGNITION_MODEL_CHECKPOINT=karlo0/surya_text_recognition" \
+ # -e "TABLE_REC_MODEL_CHECKPOINT=datalab-to/surya_tablerec" \
+ # -e "OCR_ERROR_MODEL_CHECKPOINT=tarun-menta/ocr_error_detection" \
+
+docker_run_cmd=()
+
+docker_run_cmd+=("docker run --rm")
+docker_run_cmd+=("--name ${DOCKER_CONTAINER}")
+docker_run_cmd+=("--shm-size=2gb")
+docker_run_cmd+=("-e VOLUME_ROOT_MOUNT_PATH=/v")
+docker_run_cmd+=("-e HANDLER_FILE_NAME=test-handler.py")
+docker_run_cmd+=("-e USE_POSTPROCESS_LLM=no")
+docker_run_cmd+=("-e OLLAMA_HUGGING_FACE_MODEL_NAME=unsloth/SmolLM2-135M-Instruct-GGUF")
+docker_run_cmd+=("-e OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION=F16")
+docker_run_cmd+=("-e OLLAMA_BASE_URL=http://127.0.0.1:11434")
+docker_run_cmd+=("-e HF_HUB_OFFLINE=1")
+#docker_run_cmd+=("-e MODEL_CACHE_DIR=/v/huggingface-cache/hub")
+#docker_run_cmd+=("-e DETECTOR_MODEL_CHECKPOINT=s3://models--karlo0--surya_line_det_2.20/snapshots/6f7abde77d1611fdf3b64709e85eeb9fdb18478d")
+#docker_run_cmd+=("-e LAYOUT_MODEL_CHECKPOINT=s3://models--karlo0--surya_layout_multimodal/snapshots/b1832b53e4a2b58e45f7fd64ca0b02fec2a58ecb")
+#docker_run_cmd+=("-e FOUNDATION_MODEL_CHECKPOINT=s3://models--karlo0--surya_text_recognition/snapshots/ed1a5d6414c52858c8fec81351719e7bff1843c6")
+#docker_run_cmd+=("-e RECOGNITION_MODEL_CHECKPOINT=s3://models--karlo0--surya_text_recognition/snapshots/ed1a5d6414c52858c8fec81351719e7bff1843c6")
+#docker_run_cmd+=("-e TABLE_REC_MODEL_CHECKPOINT=s3://models--karlo0--surya_tablerec/snapshots/c64c5cc5d7908af69309d8d6e5c1845105a87625")
+#docker_run_cmd+=("-e OCR_ERROR_MODEL_CHECKPOINT=s3://models--karlo0--tarun-menta_ocr_error_detection/snapshots/93ac756c31fb637f40bc68d3df167d9b13de7277")
+#docker_run_cmd+=("-e ORDER_MODEL_CHECKPOINT=vikp/surya_order")
+#docker_run_cmd+=("-e TEXIFY_MODEL_NAME=vikp/texify")
+#docker_run_cmd+=("-e MARKER_MODEL_NAME=vikp/pdf_postprocessor_t5")
+docker_run_cmd+=("-e TORCH_NUM_THREADS=1")
+docker_run_cmd+=("-e TORCH_DEVICE=cpu")
+docker_run_cmd+=("-e PYTORCH_ENABLE_MPS_FALLBACK=1")
+docker_run_cmd+=("-e OMP_NUM_THREADS=1")
+docker_run_cmd+=("-e MKL_NUM_THREADS=1")
+docker_run_cmd+=("-e OCR_ENGINE=none")
+docker_run_cmd+=("-v ${HOME}/.ollama/:/v/.ollama/")
+#docker_run_cmd+=("-v ${PARENT_OF_SCRIPT_DIR}/models/huggingface:/v/huggingface-cache")
+docker_run_cmd+=("-v ${PARENT_OF_SCRIPT_DIR}/models/datalab:/app/cache/datalab")
+docker_run_cmd+=("-v ${TEST_INPUT_DIR}:/v/input")
+docker_run_cmd+=("-v ${TEST_OUTPUT_DIR}:/v/output")
+docker_run_cmd+=("-it")
+docker_run_cmd+=("${DOCKER_CONTAINER}")
+
+echo "Docker run command:"
+echo "${docker_run_cmd[*]}"
+
+# shellcheck disable=SC2068
+${docker_run_cmd[@]}
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then

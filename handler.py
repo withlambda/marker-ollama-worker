@@ -27,39 +27,58 @@ def check_and_pull_model(model_name):
     If not, pulls it from the registry.
     """
     print(f"Checking for model: {model_name}")
-    try:
-        # Check if model exists
-        response = requests.post("http://localhost:11434/api/show", json={"name": model_name})
-        if response.status_code != 200:
-            raise RuntimeError(f"Ollama Model '{model_name}' not found.")
+    host = "http://localhost:11434"
 
-        print(f"Load Model '{model_name}' ...")
-        subprocess.run(["ollama", "pull", model_name], check=True)
-        print(f"Model '{model_name}' loaded successfully.")
+    # 1. Get ALL local models via the tags endpoint
+    response = requests.get(f"{host}/api/tags")
+    if response.status_code != 200:
+        raise RuntimeError("Could not connect to Ollama server.")
+
+    models = [m["name"] for m in response.json().get("models", [])]
+
+    # 2. Check for exact match or base name match (e.g., 'name' matches 'name:latest')
+    if model_name in models or any(m.startswith(f"{model_name}:") for m in models):
+        print(f"Model '{model_name}' found locally.")
+        # Do NOT run 'ollama pull' here for custom models
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error managing model '{model_name}': {e}")
-        raise
-    except Exception as e:
-        print(f"Unexpected error checking model '{model_name}': {e}")
-        raise
+
+    # 3. If NOT found, only pull if it's an official model.
+    # For custom models, you'd need to run 'ollama create' instead.
+    print(f"Model '{model_name}' not found. Attempting to pull official manifest...")
+    try:
+        subprocess.run(["ollama", "pull", model_name], check=True)
+        return True
+    except subprocess.CalledProcessError:
+        raise RuntimeError(f"Model '{model_name}' is not local and could not be pulled from registry.")
 
 class TextProcessor:
-    def __init__(self, value):
-        # Check if value is either a string or a number (int, float)
+    @staticmethod
+    def is_allowed_type_for_parsing(value):
         if not isinstance(value, (str, int, float)):
             raise TypeError("Value must be string or number")
-        self.value = value
 
-    def to_lower(self):
-        return str(self.value).lower()
+    def to_bool(self, value):
+        if isinstance(value, bool):
+            return value
 
-    def is_parseable_as_int(self):
+        self.is_allowed_type_for_parsing(value)
+        
+        normalized_value = str(value).lower().strip()
+        if not normalized_value:
+            return False
+        if normalized_value in ('true', '1', 'yes', 'on'):
+             return True
+        if normalized_value in ('false', '0', 'no', 'off'):
+             return False
+        raise ValueError(f"Value '{value}' is not parsable as a boolean.")
+
+    def is_parseable_as_int(self, value):
+        self.is_allowed_type_for_parsing(value)
         try:
-            int(self.value)
+            int(value)
             return True
         except (ValueError, TypeError):
-            raise ValueError(f"Value '{self.value}' is not parsable as an integer.")
+            raise ValueError(f"Value '{value}' is not parsable as an integer.")
 
 def check_is_dir(path: str):
     if not os.path.isdir(path):
@@ -106,18 +125,22 @@ def handler(job):
     """
     RunPod Serverless Handler.
     """
-    job_input = job.get("input", {})
 
     # --- Configuration ---
-    # Get configuration from job input, falling back to environment variables
+    text_processor = TextProcessor()
+    ollama_model=""
+
+    # Load job input
+    job_input = job.get("input", {})
+
+    # Read environment variables
     storage_bucket_path = os.environ.get('VOLUME_ROOT_MOUNT_PATH')
     if not storage_bucket_path:
          raise ValueError("Environment variable VOLUME_ROOT_MOUNT_PATH is not set")
 
-    ollama_model = os.environ.get('OLLAMA_MODEL')
-    if not ollama_model:
-        raise ValueError("Environment variable OLLAMA_MODEL is not set")
-
+    use_postprocess_llm = text_processor.to_bool(os.environ.get('USE_POSTPROCESS_LLM'))
+    
+    # Get configuration from job input
     input_dir = job_input.get('input_dir')
     output_dir = job_input.get('output_dir')
 
@@ -126,11 +149,11 @@ def handler(job):
 
     marker_workers = job_input.get('marker_workers', "")
     if marker_workers:
-        TextProcessor(marker_workers).is_parseable_as_int()
+        text_processor.is_parseable_as_int(marker_workers)
 
-    marker_paginate_output = TextProcessor(job_input.get('marker_paginate_output', "False")).to_lower()
-    marker_use_llm = TextProcessor(job_input.get('marker_use_llm', "False")).to_lower()
-    marker_force_ocr = TextProcessor(job_input.get('marker_force_ocr', "False")).to_lower()
+    marker_paginate_output = text_processor.to_bool(job_input.get('marker_paginate_output', "False"))
+    marker_use_llm = text_processor.to_bool(job_input.get('marker_use_llm', "False"))
+    marker_force_ocr = text_processor.to_bool(job_input.get('marker_force_ocr', "False"))
     marker_block_correction_prompt = job_input.get("marker_block_correction_prompt", "")
 
     # Construct absolute paths
@@ -164,15 +187,6 @@ def handler(job):
     # Create output directory if not existent
     os.makedirs(output_path, exist_ok=True)
 
-    # --- 1. Ensure Model Exists ---
-    if not check_and_pull_model(ollama_model):
-        return {"error": f"Failed to pull or verify model: {ollama_model}"}
-
-    print(f"--- Processing Job ---")
-    print(f"Input Path: {input_path}")
-    print(f"Output Path: {output_path}")
-    print(f"Ollama Model: {ollama_model}")
-
     # --- 2. Construct Marker Command ---
     marker_args = [
         input_path,
@@ -182,18 +196,30 @@ def handler(job):
     if marker_workers:
         marker_args.extend(["--workers", str(marker_workers)])
 
-    if marker_paginate_output == "true":
+    if marker_paginate_output:
         marker_args.append("--paginate_output")
 
-    if marker_force_ocr == "true":
+    if marker_force_ocr:
         marker_args.append("--force_ocr")
 
-    if marker_use_llm == "true":
+    if marker_use_llm and use_postprocess_llm:
         marker_args.append("--use_llm")
         marker_args.append("--llm_service=marker.services.ollama.OllamaService")
+        ollama_model = os.environ.get('OLLAMA_MODEL')
+        if not ollama_model:
+            raise ValueError("Environment variable OLLAMA_MODEL is not set")
+        if not check_and_pull_model(ollama_model):
+            return {"error": f"Failed to pull or verify model: {ollama_model}"}
         marker_args.extend(["--ollama_model", ollama_model])
         if marker_block_correction_prompt:
             marker_args.extend(["--block_correction_prompt", marker_block_correction_prompt])
+
+    print(f"--- Processing Job ---")
+    print(f"Input Path: {input_path}")
+    print(f"Output Path: {output_path}")
+    if ollama_model:
+        print(f"Ollama Model: {ollama_model}")
+
 
     # --- 3. Execute Processing ---
 

@@ -44,7 +44,7 @@ def test_handler():
             "output_dir": output_dir,
             "marker_workers": 0,
             "marker_paginate_output": True,
-            "marker_use_llm": True,
+            "marker_use_llm": False,
             "marker_force_ocr": False
         }
     }

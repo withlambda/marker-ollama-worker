@@ -9,7 +9,7 @@ The primary purpose of the code in this directory is to automate the downloading
 ## Files
 
 *   **`marker-models.txt`**: A text file listing the Hugging Face model repositories to be downloaded.
-    *   Current models: `vikp/surya_det2`, `vikp/surya_layout2`, `vikp/surya_order`, `vikp/surya_rec2`, `vikp/texify2`, `vikp/pdf_postprocessor_t5`.
+    *   Current models: `vikp/surya_det2`, `vikp/surya_layout2`, `vikp/surya_order`, `vikp/surya_rec2`, `vikp/texify2`, `vikp/pdf_postprocessor_t5`, `vikp/surya_tablerec`, `vikp/surya_ocr_error`.
 *   **`functions.sh`**: A shell script library containing helper functions.
     *   `get_parent_dir`: Returns the parent directory of a given path.
     *   `hf_download`: Wraps the `hf download` command.
