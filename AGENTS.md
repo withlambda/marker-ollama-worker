@@ -8,6 +8,7 @@ This file controls the general behavior of the agent for this project.
     - The agent MUST NOT overwrite or undo manual changes made by the user unless explicitly instructed to do so.
     - Treat user edits as the new "ground truth" or baseline for all subsequent actions.
     - If a user modifies a file, the agent should analyze and understand the intent of those changes before proposing further modifications.
+    - **Never revert content**: Before modifying a file (especially documentation like `README.md`), the agent must check the existing content to ensure it does not accidentally delete or revert recent user additions. When updating a file, merge new information with existing content rather than replacing sections wholesale.
 
 2.  **Conflict Resolution**:
     - If manual changes introduce errors, inconsistencies, or conflicts with established project rules (e.g., compilation errors, formatting violations):
@@ -26,6 +27,7 @@ When generating or modifying code, the agent must ensure that:
     - The `README.md` file must be kept up-to-date with every significant change.
     - It should clearly state the project's purpose, installation steps, usage instructions, and deployment details.
     - When executing prompts that modify the system's behavior or configuration, the agent must review and update `README.md` to reflect these changes.
+    - **Verification**: Before writing to `README.md`, re-read the current file content to ensure no manual edits (e.g., specific configuration values, notes, or section removals) are lost in the update.
 
 ## Custom Commands
 

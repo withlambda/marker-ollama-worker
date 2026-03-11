@@ -18,7 +18,7 @@ The container runs a Python handler script that listens for jobs from the RunPod
 *   **Multi-Format Support**: Supports `.pdf`, `.pptx`, `.docx`, `.xlsx`, `.html`, and `.epub`.
 *   **Ollama Integration**: Leverages a local Ollama instance for enhanced OCR and conversion.
 *   **Offline/Cached Models**: Can build Ollama models dynamically from a mounted Hugging Face cache, avoiding repeated network downloads.
-*   **NVIDIA Optimized**: Uses the official `nvcr.io/nvidia/pytorch:25.04-py3` base image (PyTorch 2.7.0) for maximum GPU performance.
+*   **NVIDIA Optimized**: Uses the official `pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime` base image for maximum GPU performance.
 *   **Configurable**: Job inputs can override default environment variables.
 
 ## Prerequisites
