@@ -25,6 +25,15 @@ def check_and_pull_model(model_name):
     """
     Checks if the specified Ollama model exists locally.
     If not, pulls it from the registry.
+
+    Args:
+        model_name (str): The name of the Ollama model to check.
+
+    Returns:
+        bool: True if the model exists or was successfully pulled.
+
+    Raises:
+        RuntimeError: If the model cannot be found or pulled.
     """
     print(f"Checking for model: {model_name}")
     host = "http://localhost:11434"
@@ -52,12 +61,37 @@ def check_and_pull_model(model_name):
         raise RuntimeError(f"Model '{model_name}' is not local and could not be pulled from registry.")
 
 class TextProcessor:
+    """
+    A utility class for processing text inputs, primarily for parsing configuration values.
+    """
     @staticmethod
     def is_allowed_type_for_parsing(value):
+        """
+        Checks if the value is a string, integer, or float.
+
+        Args:
+            value: The value to check.
+
+        Raises:
+            TypeError: If the value is not a string, integer, or float.
+        """
         if not isinstance(value, (str, int, float)):
             raise TypeError("Value must be string or number")
 
     def to_bool(self, value):
+        """
+        Converts a value to a boolean.
+
+        Args:
+            value: The value to convert. Can be a boolean, string, or number.
+
+        Returns:
+            bool: The boolean representation of the value.
+
+        Raises:
+            ValueError: If the value cannot be parsed as a boolean.
+            TypeError: If the value is not a supported type.
+        """
         if isinstance(value, bool):
             return value
 
@@ -73,6 +107,19 @@ class TextProcessor:
         raise ValueError(f"Value '{value}' is not parsable as a boolean.")
 
     def is_parseable_as_int(self, value):
+        """
+        Checks if a value can be parsed as an integer.
+
+        Args:
+            value: The value to check.
+
+        Returns:
+            bool: True if the value can be parsed as an integer.
+
+        Raises:
+            ValueError: If the value cannot be parsed as an integer.
+            TypeError: If the value is not a supported type.
+        """
         self.is_allowed_type_for_parsing(value)
         try:
             int(value)
@@ -81,29 +128,84 @@ class TextProcessor:
             raise ValueError(f"Value '{value}' is not parsable as an integer.")
 
 def check_is_dir(path: str):
+    """
+    Checks if the given path is a directory.
+
+    Args:
+        path (str): The path to check.
+
+    Raises:
+        NotADirectoryError: If the path is not a directory.
+    """
     if not os.path.isdir(path):
         raise NotADirectoryError(f"Path '{path}' is not a directory.")
 
 def check_is_not_file(path: str):
+    """
+    Checks if the given path is not a file.
+
+    Args:
+        path (str): The path to check.
+
+    Raises:
+        ValueError: If the path is a file.
+    """
     if os.path.isfile(path):
         raise ValueError(f"Path '{path}' is a file.")
 
 def check_no_subdirs(path: str):
+    """
+    Checks if the directory at the given path contains any subdirectories.
+
+    Args:
+        path (str): The path to the directory.
+
+    Raises:
+        ValueError: If the directory contains subdirectories.
+    """
     subdir_count=sum(1 for entry in os.scandir(path) if entry.is_dir())
 
     if subdir_count > 0:
         raise ValueError(f"Path '{path}' contains subdirectories.")
 
 def is_empty_dir(path: str) -> bool:
+    """
+    Checks if a directory is empty.
+
+    Args:
+        path (str): The path to the directory.
+
+    Returns:
+        bool: True if the directory is empty, False otherwise.
+    """
     p = Path(path)
     # Returns True only if it's a directory and contains zero items
     return p.is_dir() and not any(p.iterdir())
 
 def check_is_empty_dir(path: str):
+    """
+    Checks if the directory at the given path is empty.
+
+    Args:
+        path (str): The path to the directory.
+
+    Raises:
+        ValueError: If the directory is not empty.
+    """
     if os.path.exists(path) and not is_empty_dir(path):
         raise ValueError(f"Directory '{path}' is not empty.")
 
 def validate_document_formats(directory_path: str, allowed_file_extensions: set[str]):
+    """
+    Validates that all files in the directory have allowed extensions.
+
+    Args:
+        directory_path (str): The path to the directory to scan.
+        allowed_file_extensions (set[str]): A set of allowed file extensions (e.g., {'.pdf', '.docx'}).
+
+    Raises:
+        ValueError: If any file has an unsupported extension.
+    """
     path = Path(directory_path)
 
     invalid_files = []
@@ -124,6 +226,14 @@ def validate_document_formats(directory_path: str, allowed_file_extensions: set[
 def handler(job):
     """
     RunPod Serverless Handler.
+
+    Processes input documents using 'marker-pdf', optionally using an Ollama LLM model.
+
+    Args:
+        job (dict): The job payload containing input configuration.
+
+    Returns:
+        dict: A dictionary containing the status and message of the operation.
     """
 
     # --- Configuration ---

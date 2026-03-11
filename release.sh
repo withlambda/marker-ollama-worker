@@ -14,6 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# Script to automate the release process for the project.
+# It performs the following steps:
+# 1. Checks for uncommitted changes.
+# 2. Checks if the version tag already exists.
+# 3. Updates the version in VERSION and requirements.txt.
+# 4. Generates a changelog entry from git commits.
+# 5. Commits the changes and creates a new git tag.
+# 6. Pushes the changes and the tag to the remote repository.
+
 # Ensure the script stops on errors
 set -e
 

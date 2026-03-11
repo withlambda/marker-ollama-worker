@@ -30,6 +30,10 @@ from handler import handler
 def test_handler():
     """
     Simulates a RunPod job event and calls the handler.
+    
+    This function sets up a mock job payload, invokes the main handler logic,
+    and prints the result. It effectively tests the end-to-end processing pipeline
+    without needing a live RunPod environment.
     """
     print("--- Starting Local Handler Test ---")
 

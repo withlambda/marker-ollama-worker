@@ -62,7 +62,9 @@ You can trigger the worker with a JSON payload. All fields are optional and will
     "marker_workers": 4,
     "marker_paginate_output": false,
     "marker_use_llm": true,
-    "marker_force_ocr": false
+    "marker_force_ocr": false,
+    "marker_disable_multiprocessing": false,
+    "marker_block_correction_prompt": "Optional custom prompt"
   }
 }
 ```
@@ -79,6 +81,8 @@ You can trigger the worker with a JSON payload. All fields are optional and will
 | `OLLAMA_MODEL` | Default LLM model. | `llama3` |
 | `OLLAMA_MODELS_DIR` | Directory for Ollama models. | `/root/.ollama/models` |
 | `MARKER_WORKERS` | Number of worker processes. | `2` |
+| `USE_POSTPROCESS_LLM` | Enable LLM post-processing. | `False` |
+| `MARKER_DEBUG` | Enable debug mode. | `False` |
 
 ## Local Testing
 

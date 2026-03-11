@@ -64,21 +64,23 @@ When the user issues the command `/execute-prompts`, the agent must:
 
 ### `/review-code`
 When the user issues the command `/review-code`, the agent must:
-1.  Analyze all source code files in the project (e.g., `.py`, `.sh`, `Dockerfile`, `.yml`).
+1.  Analyze all source code files in the project (e.g., `.py`, `.sh`, `Dockerfile`, `.yml`, `.env`).
 2.  Identify potential bugs, security vulnerabilities, performance issues, and code quality improvements.
 3.  Apply fixes and improvements directly to the files, ensuring that the changes are well-documented and follow the project's coding standards.
 4.  Update `README.md` if any changes affect the usage or configuration of the project.
 
 ### `/sync-prompts`
 When the user issues the command `/sync-prompts`, the agent must:
-1.  Identify all source code files in the project (e.g., `.py`, `.sh`, `Dockerfile`, `.yml`).
-2.  For each source file, locate or create a corresponding prompt file in the `prompt/` directory (e.g., `prompt/handler_py.md` for `handler.py`).
-3.  Update the content of each prompt file to include:
-    - A clear instruction to generate the specific source file.
-    - The **exact and complete** current content of the source file, wrapped in a code block.
-    - Any necessary context or dependencies required to regenerate the file identically.
-4.  Ensure that executing the prompt file (via `/exec-prompt`) would result in the exact regeneration of the current source code.
-5.  **Crucially**, this command must ONLY modify files within the `prompt/` directory. It must NOT modify any source code files.
+1.  **Inventory**: Identify all source code files (e.g., `.py`, `.sh`, `Dockerfile`, `.yml`, `.env`) in the project, excluding `.git`, `__pycache__`, and `build` directories.
+2.  **Cleanup**: Identify any files in the `prompt/` directory that no longer have a corresponding source file and delete them.
+3.  **Generate/Update**: For each source file, create or update its corresponding prompt file (naming convention: `prompt/<path_to_file_with_underscores>.md`).
+4.  **Content Requirements**:
+    -   **Do not** simply copy-paste the source code as the primary instruction.
+    -   **Context**: Describe the file's purpose and location.
+    -   **Interface**: Define classes, functions, inputs, outputs, and environment variables.
+    -   **Logic**: Describe the internal logic, algorithms, and error handling in detailed Natural Language or Pseudocode.
+    -   **Exceptions**: You MAY include code blocks for critical constants, complex regex, or configuration file content (like `Dockerfile`) if exact reproduction is impossible via description alone.
+5.  **Goal**: The content of the prompt file must be sufficient for an LLM to regenerate the source file exactly as it behaves now.
 
 ### `/add-src-docs`
 When the user issues the command `/add-src-docs`, the agent must:
