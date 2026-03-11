@@ -59,7 +59,3 @@ fi
 # set handler file name, defaults to handler.py
 
 export HANDLER_FILE_NAME="${HANDLER_FILE_NAME:-handler.py}"
-
-# set permission for non-root user
-
-chown -R appuser:appgroup "${VOLUME_ROOT_MOUNT_PATH}"
