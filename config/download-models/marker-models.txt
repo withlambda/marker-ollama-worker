@@ -3,12 +3,3 @@ karlo0/surya_layout_multimodal
 karlo0/surya_text_recognition
 karlo0/surya_tablerec
 karlo0/tarun-menta_ocr_error_detection
-datalab-to/surya_tablerec
-tarun-menta/ocr_error_detection
-datalab-to/surya-alpha
-vikp/surya_det3
-vikp/surya_layout3
-vikp/surya_rec2
-vikp/surya_order
-vikp/texify
-vikp/pdf_postprocessor_t5
