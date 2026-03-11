@@ -11,8 +11,8 @@
 # build dir
 /build
 
-# exclude .env files
-**/*.env
+# exclude private.env files
+**/*.private.env
 
 # models dir
 /models

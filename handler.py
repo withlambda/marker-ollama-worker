@@ -139,6 +139,7 @@ def handler(job):
          raise ValueError("Environment variable VOLUME_ROOT_MOUNT_PATH is not set")
 
     use_postprocess_llm = text_processor.to_bool(os.environ.get('USE_POSTPROCESS_LLM'))
+    marker_debug = text_processor.to_bool(os.environ.get('MARKER_DEBUG', "False"))
     
     # Get configuration from job input
     input_dir = job_input.get('input_dir')
@@ -147,13 +148,14 @@ def handler(job):
     if not input_dir or not output_dir:
         raise ValueError("input_dir and output_dir are required in job input")
 
-    marker_workers = job_input.get('marker_workers', "")
-    if marker_workers:
+    marker_workers = job_input.get('marker_workers')
+    if marker_workers is not None:
         text_processor.is_parseable_as_int(marker_workers)
 
     marker_paginate_output = text_processor.to_bool(job_input.get('marker_paginate_output', "False"))
     marker_use_llm = text_processor.to_bool(job_input.get('marker_use_llm', "False"))
     marker_force_ocr = text_processor.to_bool(job_input.get('marker_force_ocr', "False"))
+    marker_disable_multiprocessing = text_processor.to_bool(job_input.get('marker_disable_multiprocessing', "False"))
     marker_block_correction_prompt = job_input.get("marker_block_correction_prompt", "")
 
     # Construct absolute paths
@@ -193,7 +195,7 @@ def handler(job):
         "--output_dir", output_path
     ]
 
-    if marker_workers:
+    if marker_workers is not None:
         marker_args.extend(["--workers", str(marker_workers)])
 
     if marker_paginate_output:
@@ -201,6 +203,12 @@ def handler(job):
 
     if marker_force_ocr:
         marker_args.append("--force_ocr")
+
+    if marker_disable_multiprocessing:
+        marker_args.append("--disable_multiprocessing")
+
+    if marker_debug:
+        marker_args.append("--debug")
 
     if marker_use_llm and use_postprocess_llm:
         marker_args.append("--use_llm")
