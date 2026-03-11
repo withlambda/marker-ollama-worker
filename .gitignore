@@ -1,0 +1,18 @@
+### Intellij ###
+# Default ignored files
+.idea/shelf/
+.idea/workspace.xml
+# Editor-based HTTP Client requests
+.idea/httpRequests/
+# Datasource local storage ignored files
+.idea/dataSources/
+.idea/dataSources.local.xml
+
+# build dir
+/build
+
+# exclude private.env files
+**/*.private.env
+
+# models dir
+/models
