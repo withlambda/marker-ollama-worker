@@ -140,7 +140,6 @@ You can trigger the worker with a JSON payload. All fields are optional and will
 | `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` | Quantization string to match GGUF file.               | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
 | `HF_HOME`                                | Path to Hugging Face cache.                           | `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache`    |
 | `OLLAMA_MODELS_DIR`                      | Directory for Ollama models (relative to root mount). | `/.ollama/models`                                |
-| `MARKER_WORKERS`                         | Number of worker processes.                           | **None** (Marker determines it automatically)    |
 | `MARKER_DEBUG`                           | Enable debug mode.                                    | `False`                                          |
 
 ### Additional Configuration Variables

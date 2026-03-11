@@ -20,7 +20,7 @@ The setup should:
 -   **Docker Compose**:
     -   Map `test_data/input` to the container's `INPUT_DIR`.
     -   Map `test_data/output` to the container's `OUTPUT_DIR`.
-    -   Set necessary environment variables (e.g., `OLLAMA_MODEL`, `MARKER_WORKERS`).
+    -   Set necessary environment variables (e.g., `OLLAMA_MODEL`).
     -   **CPU Support**: Ensure the `docker-compose.test.yml` does *not* require NVIDIA runtime or GPU resources. It should be configured to run on CPU by default for testing.
     -   Ensure the container is built from the local `Dockerfile`.
 -   **Verification**:

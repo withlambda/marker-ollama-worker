@@ -21,16 +21,16 @@ The handler `handler.py` should:
 The system should be configurable via **Environment Variables** (defaults) and **Job Input** (overrides).
 
 ### Parameters
-| Parameter | Env Var | Job Input Key | Description |
-| :--- | :--- | :--- | :--- |
-| Storage Path | `STORAGE_BUCKET_PATH` | `storage_bucket_path` | Base path for storage. |
-| Input Path | `INPUT_DIR` | `input_dir` | Subdirectory or specific file to process. |
-| Output Path | `OUTPUT_DIR` | `output_dir` | Subdirectory for output. |
-| Ollama Model | `OLLAMA_MODEL` | `ollama_model` | LLM model to use. |
-| Models Dir | `OLLAMA_MODELS_DIR` | N/A | Persistent storage for models (Env var only). |
-| Workers | `MARKER_WORKERS` | `marker_workers` | Number of workers. |
-| Paginate | `MARKER_PAGINATE_OUTPUT` | `marker_paginate_output` | Boolean. |
-| Force OCR | `MARKER_FORCE_OCR` | `marker_force_ocr` | Boolean. |
+| Parameter    | Env Var                  | Job Input Key            | Description                                   |
+|:-------------|:-------------------------|:-------------------------|:----------------------------------------------|
+| Storage Path | `STORAGE_BUCKET_PATH`    | `storage_bucket_path`    | Base path for storage.                        |
+| Input Path   | `INPUT_DIR`              | `input_dir`              | Subdirectory or specific file to process.     |
+| Output Path  | `OUTPUT_DIR`             | `output_dir`             | Subdirectory for output.                      |
+| Ollama Model | `OLLAMA_MODEL`           | `ollama_model`           | LLM model to use.                             |
+| Models Dir   | `OLLAMA_MODELS_DIR`      | N/A                      | Persistent storage for models (Env var only). |
+| Workers      | -                        | `marker_workers`         | Number of workers.                            |
+| Paginate     | `MARKER_PAGINATE_OUTPUT` | `marker_paginate_output` | Boolean.                                      |
+| Force OCR    | `MARKER_FORCE_OCR`       | `marker_force_ocr`       | Boolean.                                      |
 
 ## Implementation Details
 
