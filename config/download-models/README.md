@@ -24,7 +24,7 @@ The primary purpose of the code in this directory is to automate the downloading
 ## Usage
 
 To speed up the download from huggingface create an access token with read access
-and store it as `HF_TOKEN` variable in a `.env` file in the same directory
+and store it as `HF_TOKEN` variable in a `private.env` file in the same directory
 as this README.md. Follow the [instructions](https://huggingface.co/docs/hub/en/security-tokens) of huggingface on how to get an access token.
 
 To download the models, execute the `exec-model-download.sh` script from this directory:
@@ -40,3 +40,8 @@ This will:
 3.  Download the models listed in `marker-models.txt` to the `../../models/huggingface` directory on your host machine.
 
 **Note**: Ensure you have Docker installed and running.
+
+## License
+
+[GNU General Public License v3.0](LICENSE)
+
