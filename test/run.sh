@@ -90,16 +90,6 @@ fi
 
 echo "Running container and executing test handler..."
 
-  #-e "OLLAMA_MODEL=${OLLAMA_MODEL}" \
-
-
- # -e "DETECTOR_MODEL_CHECKPOINT=karlo0/line_det_2.20" \
- # -e "LAYOUT_MODEL_CHECKPOINT=karlo0/surya_layout_multimodal" \
- # -e "FOUNDATION_MODEL_CHECKPOINT=karlo0/surya_text_recognition" \
- # -e "RECOGNITION_MODEL_CHECKPOINT=karlo0/surya_text_recognition" \
- # -e "TABLE_REC_MODEL_CHECKPOINT=datalab-to/surya_tablerec" \
- # -e "OCR_ERROR_MODEL_CHECKPOINT=tarun-menta/ocr_error_detection" \
-
 docker_run_cmd=()
 
 docker_run_cmd+=("docker run --rm")

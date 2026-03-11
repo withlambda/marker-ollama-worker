@@ -39,11 +39,14 @@ def check_and_pull_model(model_name):
     host = "http://localhost:11434"
 
     # 1. Get ALL local models via the tags endpoint
-    response = requests.get(f"{host}/api/tags")
-    if response.status_code != 200:
-        raise RuntimeError("Could not connect to Ollama server.")
-
-    models = [m["name"] for m in response.json().get("models", [])]
+    try:
+        response = requests.get(f"{host}/api/tags")
+        if response.status_code != 200:
+            raise RuntimeError("Could not connect to Ollama server.")
+        
+        models = [m["name"] for m in response.json().get("models", [])]
+    except requests.exceptions.RequestException:
+         raise RuntimeError("Could not connect to Ollama server.")
 
     # 2. Check for exact match or base name match (e.g., 'name' matches 'name:latest')
     if model_name in models or any(m.startswith(f"{model_name}:") for m in models):
@@ -94,6 +97,9 @@ class TextProcessor:
         """
         if isinstance(value, bool):
             return value
+        
+        if value is None:
+            return False
 
         self.is_allowed_type_for_parsing(value)
         
