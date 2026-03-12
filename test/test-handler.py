@@ -34,6 +34,13 @@ def test_handler():
     This function sets up a mock job payload, invokes the main handler logic,
     and prints the result. It effectively tests the end-to-end processing pipeline
     without needing a live RunPod environment.
+
+    The function performs the following steps:
+    1.  Defines a sample job payload mimicking the RunPod event structure.
+    2.  Sets up input and output directories relative to the mocked storage path.
+    3.  Calls the `handler` function directly with the payload.
+    4.  Verifies the result status and message.
+    5.  Exits with code 0 on success, or 1 on failure.
     """
     print("--- Starting Local Handler Test ---")
 

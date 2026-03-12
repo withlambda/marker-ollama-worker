@@ -24,8 +24,8 @@ The system should be configurable via **Environment Variables** (defaults) and *
 | Parameter    | Env Var                  | Job Input Key            | Description                                   |
 |:-------------|:-------------------------|:-------------------------|:----------------------------------------------|
 | Storage Path | `STORAGE_BUCKET_PATH`    | `storage_bucket_path`    | Base path for storage.                        |
-| Input Path   | `INPUT_DIR`              | `input_dir`              | Subdirectory or specific file to process.     |
-| Output Path  | `OUTPUT_DIR`             | `output_dir`             | Subdirectory for output.                      |
+| Input Path   | -                        | `input_dir`              | Subdirectory or specific file to process.     |
+| Output Path  | -                        | `output_dir`             | Subdirectory for output.                      |
 | Ollama Model | `OLLAMA_MODEL`           | `ollama_model`           | LLM model to use.                             |
 | Models Dir   | `OLLAMA_MODELS_DIR`      | N/A                      | Persistent storage for models (Env var only). |
 | Workers      | -                        | `marker_workers`         | Number of workers.                            |

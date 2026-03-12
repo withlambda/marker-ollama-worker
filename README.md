@@ -1,4 +1,4 @@
-# Dockerized Marker-PDF with Ollama (RunPod Serverless)
+# Marker-PDF with Ollama worker (For RunPod Serverless)
 
 This project provides a Dockerized solution for running `marker-pdf` with `Ollama` LLM support as a **RunPod Serverless Worker**. It is designed to process documents (PDF, DOCX, PPTX, etc.) on-demand, leveraging RunPod's GPU infrastructure.
 
@@ -107,34 +107,108 @@ To populate your volume with models, use the utilities provided in `config/downl
 
 ### Job Input Format
 
-You can trigger the worker with a JSON payload. All fields are optional and will fall back to environment variables if not provided.
+You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are required fields.
 
 ```json
 {
   "input": {
-    "storage_bucket_path": "/workspace",
     "input_dir": "input/my_document.pdf", 
     "output_dir": "output",
-    "ollama_model": "llama3",
+    "output_format": "markdown",
     "marker_workers": 2,
     "marker_paginate_output": false,
     "marker_force_ocr": false,
     "marker_disable_multiprocessing": false,
+    "marker_disable_image_extraction": false,
+    "marker_page_range": "0-10",
+    "marker_processors": "marker.processors.images.ImageProcessor",
     "marker_block_correction_prompt": "Optional custom prompt"
   }
 }
 ```
 
-*   `input_dir`: Can be a specific file path or a directory relative to `storage_bucket_path`. Supported formats: PDF, PPTX, DOCX, XLSX, HTML, EPUB.
+*   `input_dir`: **Required**. The path to the file or directory to process, relative to `VOLUME_ROOT_MOUNT_PATH`. Supported formats: PDF, PPTX, DOCX, XLSX, HTML, EPUB.
+*   `output_dir`: **Required**. The directory where the processed output will be saved, relative to `VOLUME_ROOT_MOUNT_PATH`.
+*   `output_format`: (Optional) The format for the output results. Supported options: `markdown`, `json`, `html`, `chunks`. Default: `markdown`.
+*   `marker_workers`: (Optional) Number of worker processes to use for conversion. Defaults to 2 if not set.
+*   `marker_paginate_output`: (Optional) Boolean. If true, outputs will be paginated. Default: `false`.
+*   `marker_force_ocr`: (Optional) Boolean. If true, forces OCR even if text is present. Default: `false`.
+*   `marker_disable_multiprocessing`: (Optional) Boolean. If true, disables multiprocessing (sets `pdftext_workers` to 1). Default: `false`.
+*   `marker_disable_image_extraction`: (Optional) Boolean. If true, disables the extraction of images from the document. Default: `false`.
+*   `marker_page_range`: (Optional) A string specifying the page range to convert. Can be comma-separated numbers or ranges (e.g., "0,5-10,20").
+*   `marker_processors`: (Optional) A comma-separated string of processors to use. Must use the full module path (e.g., `marker.processors.images.ImageProcessor`).
+*   `marker_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM.
+
+#### Examples for `marker_block_correction_prompt`
+
+**1. 19th Century German (Fraktur/Gothic Script)**
+
+Use this prompt to correct OCR errors typical of 19th-century German texts printed in Fraktur, preserving historical orthography.
+
+```text
+Role: You are an expert in 19th-century German philology and Fraktur typography (Gothic script). 
+
+Task: Correct the OCR errors in the following text while strictly adhering to historical orthography.
+
+Critical Correction Rules:
+1. Preserve Historical Spelling: Do NOT modernize the language to current German standards (Rechtschreibreform). 
+   - Keep 'th' in words like 'Thal', 'Thür', 'Rath', 'thun', 'Theil'.
+   - Keep 'y' in words like 'Seyn', 'bey', 'meyn'.
+   - Keep 'c' instead of 'k' where appropriate (e.g., 'Cultur', 'Cabinat').
+2. Fix Long-s (ſ) vs. f: OCR frequently misidentifies the long-s (ſ) as an 'f'. 
+   - Use linguistic context to restore the 'ſ' or 's'. 
+   - Remember: 'ſ' is used at the beginning or middle of syllables; 's' (round s) is used only at the end of syllables or words.
+3. Fix Ligatures and Digraphs: Correct misreadings of common Fraktur ligatures:
+   - 'ch', 'ck', 'tz', 'ſt', and 'ß' (ſz).
+4. Visual Confusion: Resolve common Fraktur-specific misidentifications:
+   - 'B' vs. 'V' (e.g., 'Bater' -> 'Vater')
+   - 'G' vs. 'S'
+   - 'k' vs. 't'
+5. Handling Hyphenation: Merge words that were split across line breaks by the OCR, but maintain the archaic hyphenation style if it was part of the word's original spelling.
+6. Output Formatting: Provide ONLY the corrected text in clean Markdown. Do not include introductory remarks, explanations, or metadata.
+```
+
+**2. Standard Modern English (General Purpose)**
+
+Use this prompt for cleaning up standard English documents, focusing on layout issues and common OCR artifacts.
+
+```text
+Role: You are an expert editor and proofreader.
+
+Task: Correct OCR errors and formatting issues in the provided text block.
+
+Rules:
+1. Fix common OCR character confusion (e.g., '1' vs 'l' vs 'I', 'rn' vs 'm').
+2. Remove hyphenation at line breaks and join the words correctly.
+3. Fix broken sentence structures caused by layout analysis errors.
+4. Do NOT rephrase or summarize the content. The goal is fidelity to the original source.
+5. Output ONLY the corrected text in Markdown format.
+```
+
+**3. Scientific/Mathematical Text Reconstruction**
+
+Use this prompt for documents heavy in mathematical notation or scientific terminology, where OCR often garbles equations.
+
+```text
+Role: You are a scientific editor specialized in LaTeX and mathematical notation.
+
+Task: Restore the following text block, paying special attention to mathematical formulas and scientific terminology.
+
+Rules:
+1. Correct misspelled scientific terms based on context.
+2. Convert garbled mathematical expressions into proper LaTeX syntax where possible (e.g., convert "x^2 + y^2 = z^2" if it appears as "x2 + y2 = z2").
+3. Ensure variable names and Greek letters are correctly identified (e.g., 'v' vs '\nu').
+4. Do NOT alter the scientific meaning or data.
+5. Output ONLY the corrected text.
+```
 
 ### Environment Variables
 
 | Variable                                 | Description                                           | Default                                          |
 |:-----------------------------------------|:------------------------------------------------------|:-------------------------------------------------|
 | `VOLUME_ROOT_MOUNT_PATH`                 | Base path for storage (Required).                     | **None** (Must be set)                           |
-| `INPUT_DIR`                              | Default input directory relative to root mount.       | `input`                                          |
-| `OUTPUT_DIR`                             | Default output directory relative to root mount.      | `output`                                         |
-| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing.                           | `yes`                                            |
+| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing.                           | `true`                                           |
+| `CLEANUP_OUTPUT_DIR_BEFORE_START`        | Delete output directory before starting.              | `false`                                          |
 | `OLLAMA_MODEL`                           | Name of the Ollama model to use/pull.                 | (Optional)                                       |
 | `OLLAMA_HUGGING_FACE_MODEL_NAME`         | HF Model ID to build from (if `OLLAMA_MODEL` unset).  | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
 | `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` | Quantization string to match GGUF file.               | (Required if `OLLAMA_MODEL` unset & LLM enabled) |

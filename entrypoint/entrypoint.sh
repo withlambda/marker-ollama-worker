@@ -20,7 +20,7 @@ set -e
 # Check that required environment variables are available
 source base-validation-and-config.sh
 
-if [ "${USE_POSTPROCESS_LLM}" = "yes" ]; then
+if [ "${USE_POSTPROCESS_LLM}" = "true" ]; then
 
   source start-ollama-server.sh
   source build-ollama-model.sh

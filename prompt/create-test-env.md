@@ -18,8 +18,6 @@ The setup should:
     -   Create two minimal PDF files (e.g., using a Python script with `reportlab` or `fpdf`) containing simple text.
     -   Save them as `test1.pdf` and `test2.pdf` in `test_data/input`.
 -   **Docker Compose**:
-    -   Map `test_data/input` to the container's `INPUT_DIR`.
-    -   Map `test_data/output` to the container's `OUTPUT_DIR`.
     -   Set necessary environment variables (e.g., `OLLAMA_MODEL`).
     -   **CPU Support**: Ensure the `docker-compose.test.yml` does *not* require NVIDIA runtime or GPU resources. It should be configured to run on CPU by default for testing.
     -   Ensure the container is built from the local `Dockerfile`.

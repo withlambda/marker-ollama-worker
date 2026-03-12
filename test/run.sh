@@ -15,6 +15,18 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # Script to run local tests for the Dockerized Marker-PDF solution (RunPod Serverless).
+#
+# This script performs the following actions:
+# 1. Sets up a build test directory and copies necessary files.
+# 2. Generates sample PDF files for testing if they don't exist.
+# 3. Builds the Docker image.
+# 4. Runs the Docker container with the test handler and mounted volumes.
+# 5. Verifies that Markdown output files are generated.
+#
+# Prerequisites:
+# - Docker installed and running.
+# - Python 3 installed.
+# - Access to Ollama models and Marker models (mounted via volumes).
 
 set -e
 

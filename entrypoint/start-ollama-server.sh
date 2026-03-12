@@ -16,6 +16,17 @@
 
 set -e
 
+# Starts the Ollama server in the background and waits for it to become responsive.
+#
+# Environment Variables:
+#   OLLAMA_MODELS (string): The directory where Ollama stores its models.
+#
+# Behavior:
+#   - Starts 'ollama serve' as 'appuser' in the background.
+#   - Redirects logs to 'ollama.log'.
+#   - Polls http://127.0.0.1:11434 until a successful response is received or max retries are exceeded.
+#   - Exits with 1 if the server fails to start.
+
 echo "Starting Ollama service..."
 # Start Ollama in the background. It will use OLLAMA_MODELS env var.
 # Redirect logs to prevent the background process from blocking the script output

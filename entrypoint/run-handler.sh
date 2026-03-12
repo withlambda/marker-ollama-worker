@@ -18,6 +18,15 @@ set -e
 
 # --- Run Handler ---
 
+# Starts the Python handler script using gosu to run as the 'appuser'.
+#
+# Environment Variables:
+#   HANDLER_FILE_NAME (string): The name of the python script to run (default: handler.py).
+#
+# Usage:
+#   Runs 'python3 -u <HANDLER_FILE_NAME>' as 'appuser'.
+#   '-u' ensures unbuffered output for immediate logging.
+
 echo "Starting RunPod Handler..."
 # Execute the Python handler script.
 

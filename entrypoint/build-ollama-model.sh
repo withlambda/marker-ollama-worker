@@ -16,7 +16,15 @@
 
 set -e
 
-# --- if env OLLAMA_MODEL is specified, assume to pull the Ollama model ---
+# Checks if the environment variable OLLAMA_MODEL is set.
+# If so, it assumes the model is to be pulled by Ollama directly and returns early.
+# Otherwise, it proceeds to build the Ollama model from a cached Hugging Face model.
+#
+# Environment Variables:
+#   OLLAMA_MODEL (string): The name of the Ollama model.
+#   OLLAMA_HUGGING_FACE_MODEL_NAME (string): The name of the Hugging Face model (e.g., Qwen/Qwen3-VL-8B-Thinking-GGUF).
+#   OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION (string): The quantization string to match GGUF file.
+#   HF_HOME (string): Path to the Hugging Face cache.
 
 if [ -n "${OLLAMA_MODEL}" ]; then
   return

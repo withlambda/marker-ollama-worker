@@ -16,6 +16,19 @@
 
 set -e
 
+# This script orchestrates the model download process using Docker.
+#
+# 1. Builds a Docker image containing the necessary Hugging Face tools.
+# 2. Runs a container from that image to download the models specified in text files.
+#
+# Configuration:
+#   - DOCKER_FILE_NAME: The Dockerfile to use (huggingface-hub.dockerfile).
+#   - MODELS_FILES: A comma-separated list of files containing model IDs (marker-models.txt, ollama-models.txt).
+#   - ENV_FILE_PATH: Optional path to an environment file (e.g., for HF_TOKEN).
+#
+# Output:
+#   - Models are downloaded to '../../models/huggingface' relative to this script's location.
+
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 DOCKER_FILE_NAME="huggingface-hub.dockerfile"
 DOCKER_IMAGE_NAME="hf_hub"

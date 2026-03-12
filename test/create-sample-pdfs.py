@@ -33,6 +33,9 @@ def create_pdf(filename, text):
 def main():
     """
     Main function to generate sample PDF files for testing.
+
+    Retrieves the target directory from the 'TEST_INPUT_DIR' environment variable.
+    Creates the directory if it does not exist, and then generates two sample PDF files.
     """
     # Define the output directory as the input dir for the further marker-pdf
     # processing

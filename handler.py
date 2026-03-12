@@ -17,9 +17,22 @@ import runpod
 import os
 import subprocess
 import requests
+import json
+import time
+import shutil
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.config.parser import ConfigParser
+from marker.output import text_from_rendered
 
 ALLOWED_INPUT_FILE_EXTENSIONS = {'.pdf', '.pptx', '.docx', '.xlsx', '.html', '.epub'}
+VALID_OUTPUT_FORMATS = {"json", "markdown", "html", "chunks"}
+# Cache for marker models (surya, etc) to avoid reloading on every request
+ARTIFACT_DICT = None
+
 
 def check_and_pull_model(model_name):
     """
@@ -58,10 +71,20 @@ def check_and_pull_model(model_name):
     # For custom models, you'd need to run 'ollama create' instead.
     print(f"Model '{model_name}' not found. Attempting to pull official manifest...")
     try:
-        subprocess.run(["ollama", "pull", model_name], check=True)
+        # Set a timeout (e.g., 10 minutes) to prevent hanging indefinitely
+        subprocess.run(["ollama", "pull", model_name], check=True, timeout=600)
         return True
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Timeout while pulling model '{model_name}'.")
     except subprocess.CalledProcessError:
         raise RuntimeError(f"Model '{model_name}' is not local and could not be pulled from registry.")
+
+def load_models():
+    """Loads marker models into memory if not already loaded."""
+    global ARTIFACT_DICT
+    if ARTIFACT_DICT is None:
+        print("Loading marker models into VRAM...")
+        ARTIFACT_DICT = create_model_dict()
 
 class TextProcessor:
     """
@@ -162,6 +185,7 @@ def check_is_not_file(path: str):
 def check_no_subdirs(path: str):
     """
     Checks if the directory at the given path contains any subdirectories.
+    Ignores hidden directories.
 
     Args:
         path (str): The path to the directory.
@@ -169,7 +193,7 @@ def check_no_subdirs(path: str):
     Raises:
         ValueError: If the directory contains subdirectories.
     """
-    subdir_count=sum(1 for entry in os.scandir(path) if entry.is_dir())
+    subdir_count = sum(1 for entry in os.scandir(path) if entry.is_dir() and not entry.name.startswith('.'))
 
     if subdir_count > 0:
         raise ValueError(f"Path '{path}' contains subdirectories.")
@@ -177,16 +201,22 @@ def check_no_subdirs(path: str):
 def is_empty_dir(path: str) -> bool:
     """
     Checks if a directory is empty.
+    Ignores hidden files and directories.
 
     Args:
         path (str): The path to the directory.
 
     Returns:
-        bool: True if the directory is empty, False otherwise.
+        bool: True if the directory is empty (or only contains hidden files), False otherwise.
     """
     p = Path(path)
-    # Returns True only if it's a directory and contains zero items
-    return p.is_dir() and not any(p.iterdir())
+    if not p.is_dir():
+        return False
+    # Check if there are any non-hidden files/dirs
+    for item in p.iterdir():
+        if not item.name.startswith('.'):
+            return False
+    return True
 
 def check_is_empty_dir(path: str):
     """
@@ -201,33 +231,48 @@ def check_is_empty_dir(path: str):
     if os.path.exists(path) and not is_empty_dir(path):
         raise ValueError(f"Directory '{path}' is not empty.")
 
-def validate_document_formats(directory_path: str, allowed_file_extensions: set[str]):
+def process_single_file(file_path: Path, converter, output_base_path: str):
     """
-    Validates that all files in the directory have allowed extensions.
+    Processes a single file using the provided converter and saves the output.
 
     Args:
-        directory_path (str): The path to the directory to scan.
-        allowed_file_extensions (set[str]): A set of allowed file extensions (e.g., {'.pdf', '.docx'}).
+        file_path (Path): The path to the file to process.
+        converter (PdfConverter): The initialized PdfConverter instance.
+        output_base_path (str): The base directory for saving output files.
+
+    Returns:
+        bool: True if the file was processed successfully.
 
     Raises:
-        ValueError: If any file has an unsupported extension.
+        Exception: If an error occurs during processing.
     """
-    path = Path(directory_path)
+    try:
+        print(f"Converting {file_path.name}...")
+        rendered = converter(str(file_path))
+        full_text, out_meta, images = text_from_rendered(rendered)
+        
+        # Create a subfolder for this file's output (similar to marker CLI)
+        fname = file_path.stem
+        out_folder = Path(output_base_path) / fname
+        out_folder.mkdir(parents=True, exist_ok=True)
 
-    invalid_files = []
+        # Save Markdown
+        with open(out_folder / f"{fname}.md", "w", encoding="utf-8") as f:
+            f.write(full_text)
 
-    # Iterate only over files (ignore subdirectories)
-    for file in path.iterdir():
-        if file.is_file():
-            # .suffix returns the extension including the dot (e.g., '.docx')
-            if file.suffix.lower() not in allowed_file_extensions:
-                invalid_files.append(file.name)
+        # Save Metadata
+        with open(out_folder / f"{fname}_meta.json", "w", encoding="utf-8") as f:
+            json.dump(out_meta, f, indent=4)
 
-    if invalid_files:
-        raise ValueError(
-            f"Unsupported file formats found: {', '.join(invalid_files)}. "
-            f"Allowed formats are: {', '.join(allowed_file_extensions)}"
-        )
+        # Save Images
+        for img_filename, img in images.items():
+            img.save(out_folder / img_filename)
+
+        print(f"Finished {file_path.name}")
+        return True
+    except Exception as e:
+        print(f"Error processing {file_path.name}: {e}")
+        raise e
 
 def handler(job):
     """
@@ -246,6 +291,10 @@ def handler(job):
     text_processor = TextProcessor()
     ollama_model=""
 
+    # Ensure models are loaded (Warm Start)
+    load_models()
+    global ARTIFACT_DICT
+
     # Load job input
     job_input = job.get("input", {})
 
@@ -255,22 +304,23 @@ def handler(job):
          raise ValueError("Environment variable VOLUME_ROOT_MOUNT_PATH is not set")
 
     use_postprocess_llm = text_processor.to_bool(os.environ.get('USE_POSTPROCESS_LLM'))
-    marker_debug = text_processor.to_bool(os.environ.get('MARKER_DEBUG', "False"))
-    
+    cleanup_output_dir = text_processor.to_bool(os.environ.get('CLEANUP_OUTPUT_DIR_BEFORE_START'))
+
     # Get configuration from job input
     input_dir = job_input.get('input_dir')
     output_dir = job_input.get('output_dir')
+
+    output_format = job_input.get('output_format', "markdown")
+    if output_format not in VALID_OUTPUT_FORMATS:
+        raise ValueError(f"output_format must be one of {VALID_OUTPUT_FORMATS}")
 
     if not input_dir or not output_dir:
         raise ValueError("input_dir and output_dir are required in job input")
 
     marker_workers = job_input.get('marker_workers')
     if marker_workers is not None:
-        text_processor.is_parseable_as_int(marker_workers)
+        marker_workers = int(marker_workers)
 
-    marker_paginate_output = text_processor.to_bool(job_input.get('marker_paginate_output', "False"))
-    marker_force_ocr = text_processor.to_bool(job_input.get('marker_force_ocr', "False"))
-    marker_disable_multiprocessing = text_processor.to_bool(job_input.get('marker_disable_multiprocessing', "False"))
     marker_block_correction_prompt = job_input.get("marker_block_correction_prompt", "")
 
     # Construct absolute paths
@@ -295,76 +345,117 @@ def handler(job):
             "status": "success",
             "message": "No files found to process."
         }
-    # Check that only allowed files are in the input directory
-    validate_document_formats(input_path, ALLOWED_INPUT_FILE_EXTENSIONS)
 
     check_is_not_file(output_path)
-    check_is_empty_dir(output_path)
+    # Only verify empty output dir if cleanup is disabled
+    if not cleanup_output_dir:
+        check_is_empty_dir(output_path)
+    else:
+        if os.path.exists(output_path):
+            print(f"Cleaning output directory: {output_path}")
+            shutil.rmtree(output_path)
 
     # Create output directory if not existent
     os.makedirs(output_path, exist_ok=True)
 
-    # --- 2. Construct Marker Command ---
-    marker_args = [
-        input_path,
-        "--output_dir", output_path
-    ]
+    # --- 2. Configure Marker ---
+    # Map inputs to marker configuration dictionary
+    marker_config = {
+        "output_format": output_format,
+        "output_dir": output_path,
+        "debug": text_processor.to_bool(os.environ.get('MARKER_DEBUG', "false")),
+        "paginate_output": text_processor.to_bool(job_input.get('marker_paginate_output', "false")),
+        "force_ocr": text_processor.to_bool(job_input.get('marker_force_ocr', "false")),
+        "disable_multiprocessing": text_processor.to_bool(job_input.get('marker_disable_multiprocessing', "false")),
+        "disable_image_extraction": text_processor.to_bool(job_input.get('marker_disable_image_extraction', "false")),
+        "page_range": job_input.get('marker_page_range'),
+        "processors": job_input.get('marker_processors')
+    }
 
-    if marker_workers is not None:
-        marker_args.extend(["--workers", str(marker_workers)])
-
-    if marker_paginate_output:
-        marker_args.append("--paginate_output")
-
-    if marker_force_ocr:
-        marker_args.append("--force_ocr")
-
-    if marker_disable_multiprocessing:
-        marker_args.append("--disable_multiprocessing")
-
-    if marker_debug:
-        marker_args.append("--debug")
+    # Debug not typically used in library config directly same as CLI, but usually handled by logger
+    # if marker_debug: ...
 
     if use_postprocess_llm:
-        marker_args.append("--use_llm")
-        marker_args.append("--llm_service=marker.services.ollama.OllamaService")
+        marker_config["use_llm"] = True
+        marker_config["llm_service"] = "marker.services.ollama.OllamaService"
         ollama_model = os.environ.get('OLLAMA_MODEL')
         if not ollama_model:
             raise ValueError("Environment variable OLLAMA_MODEL is not set")
         if not check_and_pull_model(ollama_model):
             return {"error": f"Failed to pull or verify model: {ollama_model}"}
-        marker_args.extend(["--ollama_model", ollama_model])
+        marker_config["ollama_model"] = ollama_model
+        marker_config["ollama_base_url"] = "http://localhost:11434" # Default for local
         if marker_block_correction_prompt:
-            marker_args.extend(["--block_correction_prompt", marker_block_correction_prompt])
+            marker_config["block_correction_prompt"] = marker_block_correction_prompt
+
+    # Initialize ConfigParser and Converter
+    config_parser = ConfigParser(marker_config)
+    
+    converter = PdfConverter(
+        config=config_parser.generate_config_dict(),
+        artifact_dict=ARTIFACT_DICT,
+        processor_list=config_parser.get_processors(),
+        renderer=config_parser.get_renderer(),
+        llm_service=config_parser.get_llm_service() if use_postprocess_llm else None
+    )
 
     print(f"--- Processing Job ---")
     print(f"Input Path: {input_path}")
     print(f"Output Path: {output_path}")
     if ollama_model:
         print(f"Ollama Model: {ollama_model}")
+    
+    # Collect files to process
+    files_to_process = []
+    # Note: input_path is guaranteed to be a directory by check_is_dir above
+    for file in Path(input_path).iterdir():
+        if file.is_file():
+            if file.name.startswith('.'):
+                continue
+            if file.suffix.lower() in ALLOWED_INPUT_FILE_EXTENSIONS:
+                files_to_process.append(file)
+            else:
+                print(f"Skipping unsupported file: {file.name}")
 
+    if not files_to_process:
+        return {
+            "status": "success",
+            "message": "No supported files found to process."
+        }
 
     # --- 3. Execute Processing ---
-
-    print(f"Marker Processing on {input_path} ...")
-
-    cmd = ["marker"] + marker_args
-    print(f"Running command: {' '.join(cmd)}")
+    print(f"Starting conversion for {len(files_to_process)} files...")
+    start_time = time.time()
 
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"During marker processing an error occurred: {e}")
-        raise
+        # Use ThreadPoolExecutor for parallelism if marker_workers is set > 1
+        # Since models are on GPU, threading allows concurrent CPU pre/post processing
+        # while sharing the single GPU model instance.
+        max_workers = marker_workers if marker_workers and marker_workers > 1 else 1
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(process_single_file, file_to_process, converter, output_path)
+                for file_to_process in files_to_process
+            ]
+            # Wait for all to complete and check for exceptions
+            for future in futures:
+                future.result()
+
+        end_time = time.time()
+        print(f"Marker execution took: {end_time - start_time:.2f} seconds")
+
     except Exception as e:
         print(f"Unexpected error occurred during marker processing: {e}")
         raise
     print(f"Marker Processing completed")
 
     # Cleanup: Delete original file on success
-    for file in Path(input_path).iterdir():
-        if file.is_file():
-            file.unlink()  # This deletes the file
+    for file_to_process in files_to_process:
+        try:
+            file_to_process.unlink()
+        except Exception as e:
+            print(f"Warning: Failed to delete input file {file_to_process}: {e}")
 
     return {
         "status": "completed",

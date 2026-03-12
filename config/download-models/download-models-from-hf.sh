@@ -16,6 +16,16 @@
 
 set -e
 
+# This script downloads machine learning models from Hugging Face based on lists provided in text files.
+# It uses helper functions defined in 'functions.sh'.
+#
+# Environment Variables:
+#   MODELS_FILES (string): A comma-separated list of file paths. Each file contains a list of Hugging Face model IDs.
+#
+# Usage:
+#   ./download-models-from-hf.sh
+#   (Requires MODELS_FILES to be set)
+
 SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 
 # load functions

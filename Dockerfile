@@ -18,7 +18,7 @@ ARG PYTORCH_VERSION=2.8.0
 ARG CUDA_VERSION=12.8
 ARG CUDNN_VERSION=9
 ARG OLLAMA_VERSION=0.17.4
-ARG DOWNLOAD_MARKER_MODELS="no"
+ARG DOWNLOAD_MARKER_MODELS="false"
 ARG BASE_IMAGE=pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime
 
 # 2. LOAD OLLAMA IMAGE
@@ -61,7 +61,7 @@ RUN mkdir -p ${XDG_CACHE_HOME} \
     && pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
     && python3 -c "from marker.util import assign_config, download_font; download_font();" \
-    && if [ "${DOWNLOAD_MARKER_MODELS}" = "yes" ]; then \
+    && if [ "${DOWNLOAD_MARKER_MODELS}" = "true" ]; then \
     	python3 -c "from marker.models import create_model_dict; create_model_dict()"; \
     fi \
     && apt-get purge -y gcc python3-dev \

@@ -22,6 +22,9 @@
 # 4. Generates a changelog entry from git commits.
 # 5. Commits the changes and creates a new git tag.
 # 6. Pushes the changes and the tag to the remote repository.
+#
+# Usage: ./release.sh <version>
+# Example: ./release.sh 1.10.3
 
 # Ensure the script stops on errors
 set -e
@@ -66,15 +69,18 @@ TEMP_ENTRY="CHANGELOG_ENTRY.tmp"
 TEMP_FULL="CHANGELOG_FULL.tmp"
 
 # Create the new entry
-echo "## $NEW_VERSION - $(date +%Y-%m-%d)" > "$TEMP_ENTRY"
-echo "" >> "$TEMP_ENTRY"
+{
+    echo "## $NEW_VERSION - $(date +%Y-%m-%d)"
+    echo ""
+} > "$TEMP_ENTRY"
 
 # Get commits since the last tag, or all commits if no tags exist
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 if [ -z "$LAST_TAG" ]; then
     git log --pretty=format:"- %s" >> "$TEMP_ENTRY"
 else
-    git log --pretty=format:"- %s" "$LAST_TAG"..HEAD >> "$TEMP_ENTRY"
+    # Correct range syntax for git log
+    git log --pretty=format:"- %s" "${LAST_TAG}..HEAD" >> "$TEMP_ENTRY"
 fi
 echo "" >> "$TEMP_ENTRY"
 echo "" >> "$TEMP_ENTRY"

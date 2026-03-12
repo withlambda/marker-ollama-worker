@@ -16,25 +16,42 @@
 
 set -e
 
+# Checks if a variable holds a strict boolean value ("true" or "false").
+#
+# Arguments:
+#   1. var_name (string): The name of the environment variable to check.
+#
+# Exits:
+#   1: If the variable's value is neither "true" nor "false".
+check_strict_bool() {
+  local var_name="${1:?"Variable name must be provided"}"
+  local var_value="${!var_name}"
+  if [ "${var_value}" != "true" ] && [ "${var_value}" != "false" ]; then
+    echo "The value of the ${var_name} environment variable must be either 'true' or 'false' but was ${var_value}"
+    exit 1
+  fi
+}
+
 # --- Initial validation and configuration ---
 
 # Root path of network volume
 : "${VOLUME_ROOT_MOUNT_PATH:?The variable VOLUME_ROOT_MOUNT_PATH must be defined}"
 
 # Whether to use an LLM for post-processing the OCR output
-export USE_POSTPROCESS_LLM="${USE_POSTPROCESS_LLM:-"yes"}"
+export USE_POSTPROCESS_LLM="${USE_POSTPROCESS_LLM:-"true"}"
 
-if [ "${USE_POSTPROCESS_LLM}" != "yes" ] && [ "${USE_POSTPROCESS_LLM}" != "no" ]; then
-  echo "The value of the USE_POSTPROCESS_LLM environment variable must be either 'yes' or 'no'"
-  exit 1
-fi
+# If set to "true", the entire content of the output dir is deleted before starting the marker processing
+export CLEANUP_OUTPUT_DIR_BEFORE_START="${CLEANUP_OUTPUT_DIR_BEFORE_START:-"false"}"
+
+check_strict_bool USE_POSTPROCESS_LLM
+check_strict_bool CLEANUP_OUTPUT_DIR_BEFORE_START
 
 # Set the Hugging face home variable
 export HF_HOME="${HF_HOME:-"${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache"}"
 
 # Set default values for environment variables if not provided
 # These are defaults; the handler can override them via job input.
-export OLLAMA_MODELS_DIR=${OLLAMA_MODELS_DIR:-"/.ollama/models"}
+export OLLAMA_MODELS_DIR="${OLLAMA_MODELS_DIR:-"/.ollama/models"}"
 
 # Set the OLLAMA_MODELS environment variable so Ollama knows where to store/find models.
 # This allows us to point to a mounted volume (e.g., from a storage bucket).
@@ -46,7 +63,7 @@ mkdir -p "$OLLAMA_MODELS"
 
 # if OLLAMA_MODEL is not specified, then it is assumed
 # that the build should be performed from the hugging face model cache.
-if [ -z "${OLLAMA_MODEL}" ] && [ "${USE_POSTPROCESS_LLM}" == "yes" ]; then
+if [ -z "${OLLAMA_MODEL}" ] && [ "${USE_POSTPROCESS_LLM}" = "true" ]; then
 
   # Hugging Face model name, e.g: Qwen/Qwen3-VL-8B-Thinking-GGUF
   : "${OLLAMA_HUGGING_FACE_MODEL_NAME:?The variable OLLAMA_HUGGING_FACE_MODEL_NAME must be defined}"

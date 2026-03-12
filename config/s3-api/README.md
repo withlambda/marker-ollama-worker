@@ -48,6 +48,10 @@ source config/s3-api/aws-commands.sh
 
 ### Functions
 
+#### `s3_runpod_ls [options]`
+Lists S3 objects and common prefixes under a prefix or all S3 buckets.
+*   **options**: (Optional) Standard `aws s3 ls` options.
+
 #### `s3_runpod_cp_file <source_file> [destination_path]`
 Copies a single file from the local filesystem to the configured S3 bucket.
 *   **source_file**: Path to the local file to upload.
@@ -58,10 +62,15 @@ Recursively copies a local directory to the S3 bucket.
 *   **source_dir**: Path to the local directory.
 *   **destination_dir**: Destination directory path within the bucket.
 
-#### `s3_runpod_sync <source_dir> [destination_dir]`
-Syncs a local directory with the S3 bucket (only uploads new or modified files).
+#### `s3_runpod_sync_upload <source_dir> [destination_dir]`
+Syncs a local directory **to** the S3 bucket (only uploads new or modified files).
 *   **source_dir**: Path to the local directory.
 *   **destination_dir**: (Optional) Destination directory path within the bucket.
+
+#### `s3_runpod_sync_download <source_dir_in_bucket> <destination_dir>`
+Syncs a directory **from** the S3 bucket to the local filesystem (only downloads new or modified files).
+*   **source_dir_in_bucket**: Path to the directory in the bucket to download.
+*   **destination_dir**: Local destination directory path.
 
 #### `s3_runpod_delete_file <file_path>`
 Deletes a single file from the S3 bucket.

@@ -16,14 +16,34 @@
 
 set -e
 
+# Returns the parent directory of a given path.
+#
+# Arguments:
+#   1. path (string): The path for which to find the parent directory.
 get_parent_dir() {
   dirname -- "${1}"
 }
 
+# Wrapper for the `hf download` command.
+#
+# Arguments:
+#   1. model_id (string): The ID of the Hugging Face model to download.
 hf_download() {
   hf download "${1}"
 }
 
+# Processes a file line by line, executing a specified command for each line.
+#
+# Usage:
+#   process_list_file -c <command_name> -f <file_path>
+#
+# Options:
+#   -c command_name: The name of the function or command to execute for each item.
+#   -f file_path: The path to the file containing the list of items.
+#
+# Returns:
+#   0 on success.
+#   1 on error (e.g., missing arguments, file not found).
 process_list_file() {
     local local_cmd=""
     local local_file=""
@@ -34,7 +54,10 @@ process_list_file() {
         case "$opt" in
             c) local_cmd="$OPTARG" ;;
             f) local_file="$OPTARG" ;;
-            *) return 1 ;;
+            *)
+               echo "Usage: process_list_file -c <command_name> -f <file_path>" >&2
+               return 1
+               ;;
         esac
     done
 
@@ -46,6 +69,8 @@ process_list_file() {
 
     if [ -f "$local_file" ]; then
         while IFS= read -r item || [ -n "$item" ]; do
+            # Trim whitespace
+            item=$(echo "$item" | xargs)
             # Skip empty lines and comments
             [ -z "$item" ] && continue
             case "$item" in \#*) continue ;; esac
