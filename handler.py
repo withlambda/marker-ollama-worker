@@ -21,7 +21,7 @@ import time
 import json
 import sys
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Any, Dict, Tuple, Set
 
 from marker.converters.pdf import PdfConverter
@@ -340,6 +340,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
     logger.info(f"Starting conversion for {len(files_to_process)} files...")
     start_time = time.time()
     processed_files = [] # Tuples of (original_path, output_file_path)
+    successful_inputs = [] # Original paths of successfully processed files
 
     try:
         with ThreadPoolExecutor(max_workers=optimal_marker_workers) as executor:
@@ -349,13 +350,15 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
                 for file_to_process in files_to_process
             }
 
-            for future in future_to_file:
+            for future in as_completed(future_to_file):
+                input_file = future_to_file[future]
                 try:
                     success, output_file_path = future.result()
                     if success:
                         processed_files.append(output_file_path)
+                        successful_inputs.append(input_file)
                 except Exception as e:
-                    logger.error(f"File processing failed: {e}")
+                    logger.error(f"File processing failed for {input_file.name}: {e}")
 
         end_time = time.time()
         logger.info(f"Marker execution took: {end_time - start_time:.2f} seconds")
@@ -370,6 +373,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
     # --- 3. Ollama LLM Post-processing (Parallel) ---
     if use_postprocess_llm and processed_files:
         logger.info("--- Starting Ollama for Post-processing ---")
+        ollama_worker = None
         try:
             # Restart Ollama server
             # We recreate the worker instance to be safe/clean state
@@ -383,9 +387,9 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
             logger.info(f"Post-processing {len(processed_files)} files sequentially with {ollama_chunk_workers} chunk workers...")
 
             # Process files sequentially, with parallel chunk processing within each file
-            for md_file_path in processed_files:
+            for processed_file_path in processed_files:
                 ollama_worker.process_file(
-                    md_file_path=md_file_path,
+                    file_path=processed_file_path,
                     prompt_template=ollama_block_correction_prompt,
                     max_chunk_workers=ollama_chunk_workers
                 )
@@ -401,9 +405,10 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
 
     # Cleanup: Delete original file on success
     # Only delete if we reached here successfully
-    for file_to_process in files_to_process:
+    for file_to_process in successful_inputs:
         try:
             file_to_process.unlink()
+            logger.info(f"Deleted input file: {file_to_process.name}")
         except Exception as e:
             logger.warning(f"Failed to delete input file {file_to_process}: {e}")
 

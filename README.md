@@ -314,7 +314,7 @@ Output Formatting: Provide ONLY the corrected text in clean Markdown.
 | Variable                                 | Description                                           | Default                                          |
 |:-----------------------------------------|:------------------------------------------------------|:-------------------------------------------------|
 | `VOLUME_ROOT_MOUNT_PATH`                 | Base path for storage (Required).                     | **None** (Must be set)                           |
-| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing.                           | `true`                                           |
+| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing for the output results. | `true`                                           |
 | `CLEANUP_OUTPUT_DIR_BEFORE_START`        | Delete output directory before starting.              | `false`                                          |
 | `OLLAMA_MODEL`                           | Name of the Ollama model to use/pull.                 | (Optional)                                       |
 | `OLLAMA_HUGGING_FACE_MODEL_NAME`         | HF Model ID to build from (if `OLLAMA_MODEL` unset).  | (Required if `OLLAMA_MODEL` unset & LLM enabled) |

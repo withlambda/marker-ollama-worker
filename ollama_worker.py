@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import logging
+import signal
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, TextIO
@@ -47,16 +48,29 @@ class OllamaWorker:
             raise
 
     def stop_server(self) -> None:
-        """Stops the Ollama server."""
+        """Stops the Ollama server and its process group."""
         if self.process:
-            logger.info("Stopping Ollama service...")
-            self.process.terminate()
+            logger.info(f"Stopping Ollama service (PID: {self.process.pid})...")
             try:
+                # Since we used start_new_session=True, we should kill the process group
+                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+
+                # Still call wait to cleanup the zombie process
                 self.process.wait(timeout=10)
+            except ProcessLookupError:
+                logger.debug("Ollama process already gone.")
             except subprocess.TimeoutExpired:
-                logger.warning("Ollama process did not terminate gracefully, killing...")
-                self.process.kill()
-                self.process.wait()
+                logger.warning("Ollama process group did not terminate gracefully, killing...")
+                try:
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                    self.process.wait()
+                except Exception as e:
+                    logger.error(f"Failed to kill Ollama process group: {e}")
+            except Exception as e:
+                logger.error(f"Error while stopping Ollama: {e}")
+                # Fallback to simple terminate
+                self.process.terminate()
+                self.process.wait(timeout=5)
 
             logger.info("Ollama service stopped.")
             self.process = None
@@ -323,16 +337,16 @@ class OllamaWorker:
 
     def process_file(
         self,
-        md_file_path: Path,
+        file_path: Path,
         prompt_template: Optional[str] = None,
         max_chunk_workers: Optional[int] = None
     ) -> bool:
         """
-        Processes a single markdown file with the Ollama model.
+        Processes a single file with the Ollama model.
         Reads the file, processes its content, and overwrites it.
 
         Args:
-            md_file_path (Path): Path to the markdown file
+            file_path (Path): Path to the file to process
             prompt_template (str): Optional custom prompt template
             max_chunk_workers (int): Maximum number of parallel workers for chunk processing.
                                     If None, uses OLLAMA_CHUNK_WORKERS env var or auto-detection.
@@ -340,12 +354,12 @@ class OllamaWorker:
         Returns:
             bool: True if processing was successful, False otherwise
         """
-        if not md_file_path.exists():
+        if not file_path.exists():
             return False
 
-        logger.info(f"LLM Processing: {md_file_path.name}")
+        logger.info(f"LLM Processing: {file_path.name}")
         try:
-            original_text = md_file_path.read_text(encoding="utf-8")
+            original_text = file_path.read_text(encoding="utf-8")
             processed_text = self.process_text(
                 text=original_text,
                 prompt_template=prompt_template,
@@ -353,11 +367,11 @@ class OllamaWorker:
             )
 
             # Overwrite the file with processed text
-            md_file_path.write_text(processed_text, encoding="utf-8")
-            logger.info(f"Finished LLM processing for {md_file_path.name}")
+            file_path.write_text(processed_text, encoding="utf-8")
+            logger.info(f"Finished LLM processing for {file_path.name}")
             return True
         except Exception as e:
-            logger.error(f"Failed to post-process {md_file_path.name}: {e}")
+            logger.error(f"Failed to post-process {file_path.name}: {e}")
             return False
 
     @staticmethod

@@ -5,94 +5,62 @@ This file serves as the main entry point for the RunPod Serverless worker. It pr
 
 ## Interfaces
 
+### Global Variables and Constants
+
+*   `ALLOWED_INPUT_FILE_EXTENSIONS`: Set of supported extensions (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.html`, `.epub`).
+*   `VALID_OUTPUT_FORMATS`: Supported output formats (`json`, `markdown`, `html`, `chunks`).
+*   `VRAM_RESERVE_GB`: VRAM to reserve for overhead (Default: 4).
+*   `ARTIFACT_DICT`: Global cache for marker models.
+*   `BLOCK_CORRECTION_PROMPT_LIBRARY`: Dictionary mapping prompt keys to actual prompt strings.
+
 ### Functions
 
 #### `load_models()`
-Loads marker models into memory (VRAM) if not already loaded (Warm Start). It uses the global `ARTIFACT_DICT`.
+Loads marker models into memory (`ARTIFACT_DICT`) if not already loaded.
 
-```python
-def load_models() -> None:
-```
+#### `load_block_correction_prompts()`
+Loads the prompt catalog from `block_correction_prompts.json` into `BLOCK_CORRECTION_PROMPT_LIBRARY`.
 
 #### `calculate_optimal_workers(num_files: int, use_postprocess_llm: bool, marker_workers_override: Optional[int] = None) -> Tuple[int, int]`
-Calculates optimal worker counts for Marker and Ollama based on available VRAM and the number of files to process.
+Calculates optimal worker counts for Marker (`marker_workers`) and Ollama (`ollama_chunk_workers`) based on workload and available VRAM (`TOTAL_VRAM_GB`, `MARKER_VRAM_PER_WORKER`, `OLLAMA_VRAM_PER_WORKER`).
 
-```python
-def calculate_optimal_workers(
-    num_files: int,
-    use_postprocess_llm: bool,
-    marker_workers_override: Optional[int] = None
-) -> Tuple[int, int]:
-```
-*   **Args**:
-    *   `num_files` (int): Number of files to process.
-    *   `use_postprocess_llm` (bool): Whether LLM post-processing will be used.
-    *   `marker_workers_override` (Optional[int]): Manual override for marker workers.
-*   **Returns**: `Tuple[int, int]` - (marker_workers, ollama_chunk_workers).
-
-#### `process_single_file(file_path: Path, converter: PdfConverter, output_base_path: str) -> Tuple[bool, Path]`
-Processes a single file using the provided `marker` converter and saves the output (Markdown, JSON metadata, images) to a subfolder in the output directory.
-
-```python
-def process_single_file(
-    file_path: Path,
-    converter: PdfConverter,
-    output_base_path: str
-) -> Tuple[bool, Path]:
-```
+#### `marker_process_single_file(file_path: Path, converter: PdfConverter, output_base_path: str, output_format: str) -> Tuple[bool, Path]`
+Processes a single file using the `marker` converter.
+1.  Converts file to text and images.
+2.  Creates output subfolder named after the file.
+3.  Saves output file (format-specific extension), metadata JSON, and extracted images.
+4.  Returns a success flag and the path to the generated output file.
 
 #### `handler(job: Dict[str, Any]) -> Dict[str, str]`
-The main RunPod handler function.
-
-```python
-def handler(job: Dict[str, Any]) -> Dict[str, str]:
-```
-*   **Args**: `job` (Dict[str, Any]) - The job payload containing `input` configuration.
-*   **Returns**: `Dict[str, str]` - Status and message.
-*   **Environment Variables Used**:
-    *   `VOLUME_ROOT_MOUNT_PATH` (Required): Base path for storage.
-    *   `USE_POSTPROCESS_LLM` (Optional): Boolean to enable LLM.
-    *   `CLEANUP_OUTPUT_DIR_BEFORE_START` (Optional): Boolean to clean output dir.
-    *   `OLLAMA_MODEL` (Optional/Required): Model name for Ollama.
-    *   `MARKER_DEBUG` (Optional): Boolean for debug mode.
+Main RunPod entry point.
+1.  **Setup**: Initializes `TextProcessor`, loads marker models, and loads prompt catalog.
+2.  **Configuration**: Resolves paths and environment variables (`VOLUME_ROOT_MOUNT_PATH`, `USE_POSTPROCESS_LLM`, etc.).
+3.  **Input Parsing**: Reads job inputs (`input_dir`, `output_dir`, `output_format`, `marker_workers`, `ollama_chunk_workers`, `ollama_block_correction_prompt`, `block_correction_prompt_key`).
+4.  **Prompt Resolution**: Uses custom prompt or looks up by key in the catalog.
+5.  **Path Resolution**: Constructs absolute paths using `VOLUME_ROOT_MOUNT_PATH` if relative.
+6.  **Validation**: Validates directories and cleanup settings.
+7.  **Marker Conversion**:
+    *   Initializes `PdfConverter`.
+    *   Finds valid files in the input directory.
+    *   Uses `ThreadPoolExecutor` and `as_completed` to process files in parallel.
+    *   Tracks `successful_inputs` and `processed_files`.
+8.  **LLM Post-processing**:
+    *   If enabled and `processed_files` is not empty:
+        *   Starts Ollama server and ensures model exists.
+        *   Iterates through `processed_files` sequentially.
+        *   Calls `ollama_worker.process_file` with chunk parallelism.
+        *   Stops Ollama server after processing.
+9.  **Cleanup**: Deletes ONLY the original input files for which processing was successful.
+10. **Return**: Returns a completion status message.
 
 ## Logic
-1.  **Initialization**:
-    *   Initializes `TextProcessor`.
-    *   Loads marker models into global `ARTIFACT_DICT` if not present.
-    *   Reads configuration from `job['input']` and environment variables.
-2.  **Validation**:
-    *   Validates `input_dir` and `output_dir` paths.
-    *   Checks if `input_dir` is a flat directory (no subdirectories) and contains valid file extensions.
-    *   Checks `output_dir` state (empty or cleanup required).
-3.  **Configuration**:
-    *   Constructs `marker_config` dictionary based on job inputs and defaults.
-    *   If `USE_POSTPROCESS_LLM` is true, configures Ollama service settings and pulls the model if necessary.
-4.  **Converter Setup**:
-    *   Instantiates `ConfigParser` and `PdfConverter` with the configuration and loaded models.
-5.  **Processing**:
-    *   Identifies valid files in `input_dir`.
-    *   Uses `ThreadPoolExecutor` to process files in parallel based on `marker_workers`.
-    *   Calls `process_single_file` for each file.
-6.  **LLM Post-processing**:
-    *   If enabled, starts the Ollama server and ensures the model is available.
-    *   Processes each markdown file sequentially with `ollama_worker.process_file`.
-7.  **Cleanup**:
-    *   Unloads the model and stops the Ollama server.
-    *   Deletes processed input files to save space/indicate completion.
-8.  **Return**:
-    *   Returns a success message with the status `completed`.
+*   **Worker Auto-scaling**: Dynamically balances marker parallelism vs Ollama chunk parallelism to avoid OOM while maximizing GPU utilization.
+*   **Format Support**: Supports LLM post-processing for all valid output formats (`json`, `markdown`, `html`, `chunks`).
+*   **Robust Cleanup**: Ensures input files are only removed on success, facilitating retries for failed files.
+*   **Prompt Management**: Allows users to specify prompts by key (from a catalog) or directly in the job input.
 
 ## Dependencies
-*   `runpod`
-*   `os`, `subprocess`, `requests`, `json`, `time`, `shutil`
-*   `pathlib.Path`
-*   `concurrent.futures.ThreadPoolExecutor`
-*   `marker.converters.pdf.PdfConverter`
-*   `marker.models.create_model_dict`
-*   `marker.config.parser.ConfigParser`
-*   `marker.output.text_from_rendered`
-
-## Constants
-*   `ALLOWED_INPUT_FILE_EXTENSIONS`: `{'.pdf', '.pptx', '.docx', '.xlsx', '.html', '.epub'}`
-*   `VALID_OUTPUT_FORMATS`: `{"json", "markdown", "html", "chunks"}`
+*   `runpod`, `os`, `shutil`, `time`, `json`, `sys`, `pathlib`, `concurrent.futures`
+*   `marker` (converters, models, config, output)
+*   `ollama_worker.OllamaWorker`
+*   `utils.TextProcessor`, `utils` (path validation helpers)
