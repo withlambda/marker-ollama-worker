@@ -52,6 +52,18 @@ def check_is_empty_dir(path: str) -> None:
 *   **Args**: `path` (str) - The directory path.
 *   **Raises**: `ValueError` if the directory exists and is not empty.
 
+### Classes
+
+#### `TextProcessor`
+A utility class for processing text inputs, primarily for parsing configuration values.
+
+*   `to_bool(value: Any) -> bool`:
+```python
+@staticmethod
+def to_bool(value: Any) -> bool:
+```
+Converts a value (boolean, string, or number) to a boolean. Returns `True` for 'true', '1', 'yes', 'on', and `False` for 'false', '0', 'no', 'off', 'None', or empty string. Raises `ValueError` if not parsable as a boolean. Raises `TypeError` if input is not a supported type.
+
 ## Logic
 These functions primarily rely on the `os` and `pathlib` modules to perform filesystem checks. They are designed to provide consistent error reporting for path-related validations.
 

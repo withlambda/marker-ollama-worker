@@ -5,18 +5,6 @@ This file serves as the main entry point for the RunPod Serverless worker. It pr
 
 ## Interfaces
 
-### Classes
-
-#### `TextProcessor`
-A utility class for processing text inputs, primarily for parsing configuration values.
-
-*   `to_bool(value: Any) -> bool`:
-```python
-@staticmethod
-def to_bool(value: Any) -> bool:
-```
-Converts a value (boolean, string, or number) to a boolean. Returns `True` for 'true', '1', 'yes', 'on', and `False` for 'false', '0', 'no', 'off', 'None', or empty string. Raises `ValueError` if not parsable.
-
 ### Functions
 
 #### `load_models()`
@@ -26,21 +14,21 @@ Loads marker models into memory (VRAM) if not already loaded (Warm Start). It us
 def load_models() -> None:
 ```
 
-#### `calculate_optimal_workers(num_files: int, use_postprocess_llm: bool = True, marker_workers_override: Optional[int] = None) -> Tuple[int, int, int]`
+#### `calculate_optimal_workers(num_files: int, use_postprocess_llm: bool, marker_workers_override: Optional[int] = None) -> Tuple[int, int]`
 Calculates optimal worker counts for Marker and Ollama based on available VRAM and the number of files to process.
 
 ```python
 def calculate_optimal_workers(
     num_files: int,
-    use_postprocess_llm: bool = True,
+    use_postprocess_llm: bool,
     marker_workers_override: Optional[int] = None
-) -> Tuple[int, int, int]:
+) -> Tuple[int, int]:
 ```
 *   **Args**:
     *   `num_files` (int): Number of files to process.
     *   `use_postprocess_llm` (bool): Whether LLM post-processing will be used.
     *   `marker_workers_override` (Optional[int]): Manual override for marker workers.
-*   **Returns**: `Tuple[int, int, int]` - (marker_workers, ollama_file_workers, ollama_chunk_workers).
+*   **Returns**: `Tuple[int, int]` - (marker_workers, ollama_chunk_workers).
 
 #### `process_single_file(file_path: Path, converter: PdfConverter, output_base_path: str) -> Tuple[bool, Path]`
 Processes a single file using the provided `marker` converter and saves the output (Markdown, JSON metadata, images) to a subfolder in the output directory.
@@ -88,8 +76,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
     *   Calls `process_single_file` for each file.
 6.  **LLM Post-processing**:
     *   If enabled, starts the Ollama server and ensures the model is available.
-    *   Processes each markdown file with `ollama_worker.process_file`.
-    *   Parallelizes file processing based on `ollama_file_workers`.
+    *   Processes each markdown file sequentially with `ollama_worker.process_file`.
 7.  **Cleanup**:
     *   Unloads the model and stops the Ollama server.
     *   Deletes processed input files to save space/indicate completion.

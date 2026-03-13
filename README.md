@@ -169,12 +169,11 @@ This maximizes chunk-level parallelism for faster LLM processing of large docume
   "input": {
     "input_dir": "input/batch/",
     "output_dir": "output",
-    "marker_workers": 4,
-    "ollama_file_workers": 2
+    "marker_workers": 4
   }
 }
 ```
-This processes multiple files in parallel through both Marker and Ollama phases.
+This processes multiple files in parallel through the Marker phase.
 
 **Example 3: Conservative Settings (Low VRAM)**
 ```json

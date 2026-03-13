@@ -71,31 +71,32 @@ def _process_single_chunk(
 ```
 Internal helper to process a single text chunk with Ollama.
 
-*   `process_text(self, text: str, prompt_template: Optional[str] = None, max_workers: Optional[int] = None) -> str`:
+*   `process_text(self, text: str, prompt_template: Optional[str] = None, max_chunk_workers: Optional[int] = None) -> str`:
 ```python
 def process_text(
     self,
     text: str,
     prompt_template: Optional[str] = None,
-    max_workers: Optional[int] = None
+    max_chunk_workers: Optional[int] = None
 ) -> str:
 ```
 The primary interface for post-processing text. It chunks the text and processes chunks in parallel.
 
-*   `process_file(self, md_file_path: Path, prompt_template: Optional[str] = None) -> bool`:
+*   `process_file(self, md_file_path: Path, prompt_template: Optional[str] = None, max_chunk_workers: Optional[int] = None) -> bool`:
 ```python
 def process_file(
     self,
     md_file_path: Path,
-    prompt_template: Optional[str] = None
+    prompt_template: Optional[str] = None,
+    max_chunk_workers: Optional[int] = None
 ) -> bool:
 ```
 Processes a single markdown file with the Ollama model. Reads the file, processes its content using `process_text`, and overwrites the original file.
 
-*   `_get_optimal_chunk_workers(num_chunks: int) -> int`:
+*   `_get_optimal_chunk_workers(num_chunks: int, max_chunk_workers: Optional[int] = None) -> int`:
 ```python
 @staticmethod
-def _get_optimal_chunk_workers(num_chunks: int) -> int:
+def _get_optimal_chunk_workers(num_chunks: int, max_chunk_workers: Optional[int] = None) -> int:
 ```
 Internal helper to determine the optimal number of parallel chunk workers.
 
@@ -118,7 +119,7 @@ Unloads the model from VRAM to free resources.
 ## Logic
 1.  **Service Management**: Uses `subprocess.Popen` to manage the `ollama serve` process.
 2.  **Model Building**: Parses the Hugging Face hub structure to find GGUF files and creates Ollama models using `client.create`.
-3.  **Parallel Processing**: Uses `ThreadPoolExecutor` to process multiple text chunks or multiple files simultaneously, significantly improving throughput on multi-core/GPU systems.
+3.  **Parallel Processing**: Uses `ThreadPoolExecutor` to process multiple text chunks simultaneously within a single file, significantly improving throughput on multi-core/GPU systems.
 4.  **Error Handling**: Provides fallbacks (e.g., returning original text if LLM processing fails) to ensure robustness.
 
 ## Dependencies
