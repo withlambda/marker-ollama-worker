@@ -28,19 +28,50 @@
 # 5. Commits the changes and creates a new git tag.
 # 6. Pushes the changes and the tag to the remote repository.
 #
-# Usage: ./release.sh <version>
+# Usage: ./release.sh [-d|--dry-run] <version>
 # Example: ./release.sh 1.10.3
 
 # Ensure the script stops on errors
 set -e
 
+DRY_RUN=false
+VERSION_INPUT=""
+
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -d|--dry-run) DRY_RUN=true ;;
+        -h|--help) echo "Usage: ./release.sh [-d|--dry-run] <version>"; exit 0 ;;
+        *)
+            if [ -z "$VERSION_INPUT" ]; then
+                VERSION_INPUT=$1
+            else
+                echo "Error: Multiple versions provided or unknown argument: $1"
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
+
 # Check if a version argument is provided
-if [ -z "$1" ]; then
-  echo "Usage: ./release.sh <version>"
+if [ -z "$VERSION_INPUT" ]; then
+  echo "Usage: ./release.sh [-d|--dry-run] <version>"
   exit 1
 fi
 
-NEW_VERSION=$1
+# Normalize version: strip 'v' prefix if present
+NEW_VERSION=${VERSION_INPUT#v}
+
+# Validate version format (simple SemVer: X.Y.Z)
+if [[ ! $NEW_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: Version must be in the format X.Y.Z (e.g., 1.10.3). Provided: $VERSION_INPUT"
+    exit 1
+fi
+
+if [ "$DRY_RUN" = true ]; then
+    echo "Dry run enabled. No changes will be committed or pushed."
+fi
 
 # Check for uncommitted changes
 if ! git diff-index --quiet HEAD --; then
@@ -57,15 +88,35 @@ fi
 # Get current branch
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
+# Branch check: Warning if not on main/master
+if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" ]]; then
+    echo "Warning: You are on branch '$CURRENT_BRANCH'. Standard releases usually happen from 'main' or 'master'."
+    if [[ -z "$GITHUB_ACTIONS" ]]; then
+        read -p "Continue anyway? [y/N] " response
+        if [[ ! "$response" =~ ^[yY]$ ]]; then
+            echo "Release aborted."
+            exit 1
+        fi
+    fi
+fi
+
 # Update VERSION file
-echo "$NEW_VERSION" > VERSION
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Update VERSION to $NEW_VERSION"
+else
+    echo "$NEW_VERSION" > VERSION
+fi
 
 # Update requirements.txt
 # Assuming marker-pdf is the library we want to sync with
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  sed -i '' "s/marker-pdf==.*/marker-pdf==$NEW_VERSION/" requirements.txt
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Update requirements.txt to marker-pdf==$NEW_VERSION"
 else
-  sed -i "s/marker-pdf==.*/marker-pdf==$NEW_VERSION/" requirements.txt
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s/marker-pdf==.*/marker-pdf==$NEW_VERSION/" requirements.txt
+    else
+        sed -i "s/marker-pdf==.*/marker-pdf==$NEW_VERSION/" requirements.txt
+    fi
 fi
 
 # Generate CHANGELOG entry
@@ -91,38 +142,57 @@ echo "" >> "$TEMP_ENTRY"
 echo "" >> "$TEMP_ENTRY"
 
 # Combine with existing changelog
-if [ -f "$CHANGELOG_FILE" ]; then
-    # Check if the file starts with "# Changelog"
-    if grep -q "^# Changelog" "$CHANGELOG_FILE"; then
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Generate CHANGELOG.md entry for $NEW_VERSION"
+    rm -f "$TEMP_ENTRY"
+else
+    if [ -f "$CHANGELOG_FILE" ]; then
+        # Check if the file starts with "# Changelog"
+        if grep -q "^# Changelog" "$CHANGELOG_FILE"; then
+            echo "# Changelog" > "$TEMP_FULL"
+            echo "" >> "$TEMP_FULL"
+            cat "$TEMP_ENTRY" >> "$TEMP_FULL"
+            # Append existing content skipping the first line (header)
+            tail -n +2 "$CHANGELOG_FILE" >> "$TEMP_FULL"
+        else
+            # No header found, just prepend
+            cat "$TEMP_ENTRY" "$CHANGELOG_FILE" > "$TEMP_FULL"
+        fi
+    else
+        # New file
         echo "# Changelog" > "$TEMP_FULL"
         echo "" >> "$TEMP_FULL"
         cat "$TEMP_ENTRY" >> "$TEMP_FULL"
-        # Append existing content skipping the first line (header)
-        tail -n +2 "$CHANGELOG_FILE" >> "$TEMP_FULL"
-    else
-        # No header found, just prepend
-        cat "$TEMP_ENTRY" "$CHANGELOG_FILE" > "$TEMP_FULL"
     fi
-else
-    # New file
-    echo "# Changelog" > "$TEMP_FULL"
-    echo "" >> "$TEMP_FULL"
-    cat "$TEMP_ENTRY" >> "$TEMP_FULL"
+
+    mv "$TEMP_FULL" "$CHANGELOG_FILE"
+    rm -f "$TEMP_ENTRY"
 fi
 
-mv "$TEMP_FULL" "$CHANGELOG_FILE"
-rm -f "$TEMP_ENTRY"
-
 # Commit changes
-git add VERSION requirements.txt CHANGELOG.md
-git commit -m "Bump version to $NEW_VERSION"
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] git add VERSION requirements.txt CHANGELOG.md"
+    echo "[DRY RUN] git commit -m \"Bump version to $NEW_VERSION\""
+else
+    git add VERSION requirements.txt CHANGELOG.md
+    git commit -m "Bump version to $NEW_VERSION"
+fi
 
 # Create a tag
-git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] git tag -a \"v$NEW_VERSION\" -m \"Release v$NEW_VERSION\""
+else
+    git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+fi
 
 # Push changes and tags
-echo "Pushing changes to $CURRENT_BRANCH..."
-git push origin "$CURRENT_BRANCH"
-git push origin "v$NEW_VERSION"
-
-echo "Release v$NEW_VERSION prepared and pushed."
+if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] git push origin \"$CURRENT_BRANCH\""
+    echo "[DRY RUN] git push origin \"v$NEW_VERSION\""
+    echo "Dry run complete. No changes were made."
+else
+    echo "Pushing changes to $CURRENT_BRANCH..."
+    git push origin "$CURRENT_BRANCH"
+    git push origin "v$NEW_VERSION"
+    echo "Release v$NEW_VERSION prepared and pushed."
+fi

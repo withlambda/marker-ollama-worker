@@ -469,10 +469,28 @@ An `.editorconfig` file is provided at the root of the project to ensure consist
 
 ## Releasing
 
-To release a new version of the project, use the `release.sh` script. This script updates the version in `VERSION` and `requirements.txt`, generates a changelog, commits the changes, creates a git tag, and pushes everything to the remote repository.
+You can release a new version of the project either locally or via a GitHub Workflow. The process automates versioning, changelog generation, and Docker image publishing.
+
+### Using GitHub Workflow (Recommended)
+
+1.  Navigate to the **Actions** tab in the GitHub repository.
+2.  Select the **Release** workflow from the sidebar.
+3.  Click **Run workflow**.
+4.  Enter the new version number (e.g., `1.10.3`), optionally enable `dry_run`, and click **Run workflow**.
+
+This workflow will:
+- Update the version in `VERSION` and `requirements.txt`.
+- Generate a `CHANGELOG.md` entry from recent commits.
+- Commit the changes and create a git tag.
+- Push the changes and the tag to the repository.
+- **Trigger the Docker publish workflow** automatically as a subsequent step.
+
+### Using local script (Alternative)
+
+Alternatively, you can use the `release.sh` script locally:
 
 ```bash
-./release.sh <new_version>
+./release.sh [-d|--dry-run] <version>
 ```
 
 Example:
@@ -480,7 +498,15 @@ Example:
 ./release.sh 1.10.3
 ```
 
-This will trigger the GitHub Action to build and push the Docker image with the new version tag.
+The script performs the following:
+1.  **Validates** the version format (X.Y.Z).
+2.  **Checks** for uncommitted changes and existing tags.
+3.  **Normalizes** the version (strips 'v' prefix if present).
+4.  **Updates** the `VERSION` file and `requirements.txt` (`marker-pdf` version).
+5.  **Generates** a `CHANGELOG.md` entry based on git commits since the last tag.
+6.  **Commits**, tags, and pushes to the current branch.
+
+After the tag is pushed locally, the **Docker** GitHub Action will be triggered by the tag push event.
 
 ## Contributing
 
