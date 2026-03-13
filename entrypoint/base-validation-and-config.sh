@@ -1,4 +1,9 @@
 #!/bin/bash
+# base-validation-and-config.sh - Validation and configuration of environment variables.
+#
+# This script defines default values for environment variables used by the worker,
+# performs sanity checks, and ensures required directories (like OLLAMA_MODELS) exist.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

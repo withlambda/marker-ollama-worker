@@ -8,8 +8,8 @@ The container runs a Python handler script that listens for jobs from the RunPod
 1.  **Model Setup**:
     *   If `OLLAMA_MODEL` is set, it checks if the model exists locally (pulling it from the Ollama registry if necessary).
     *   If `OLLAMA_MODEL` is *not* set, it attempts to **build** an Ollama model from a cached Hugging Face GGUF file (specified by `OLLAMA_HUGGING_FACE_MODEL_NAME` and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION`).
-2.  **Processing**: Processes the specified input file or directory using `marker-pdf` (and `marker` for other formats).
-3.  **Cleanup**: Deletes the input file upon successful processing.
+2.  **Processing**: Processes the specified input directory using `marker-pdf` (and `marker` for other formats).
+3.  **Cleanup**: Deletes the input file upon successful processing (optional).
 4.  **Result**: Returns the result (status, processed files, errors).
 
 ## Features
@@ -107,12 +107,12 @@ To populate your volume with models, use the utilities provided in `config/downl
 
 ### Job Input Format
 
-You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are required fields.
+You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are required fields. `input_dir` must be a directory containing the files to process.
 
 ```json
 {
   "input": {
-    "input_dir": "input/my_document.pdf", 
+    "input_dir": "input/documents/", 
     "output_dir": "output",
     "output_format": "markdown",
     "marker_workers": 2,
@@ -122,16 +122,19 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
     "marker_disable_image_extraction": false,
     "marker_page_range": "0-10",
     "marker_processors": "marker.processors.images.ImageProcessor",
-    "ollama_block_correction_prompt": "Optional custom prompt"
+    "delete_input_on_success": false,
+    "ollama_block_correction_prompt": "Optional custom prompt",
+    "ollama_chunk_workers": 2
   }
 }
 ```
 
 #### Core Parameters
 
-*   `input_dir`: **Required**. The path to the file or directory to process, relative to `VOLUME_ROOT_MOUNT_PATH`. Supported formats: PDF, PPTX, DOCX, XLSX, HTML, EPUB.
-*   `output_dir`: **Required**. The directory where the processed output will be saved, relative to `VOLUME_ROOT_MOUNT_PATH`.
+*   `input_dir`: **Required**. The path to the directory to process, relative to `VOLUME_ROOT_MOUNT_PATH` (absolute paths are also supported). The directory must contain one or more files in supported formats: PDF, PPTX, DOCX, XLSX, HTML, EPUB.
+*   `output_dir`: **Required**. The directory where the processed output will be saved, relative to `VOLUME_ROOT_MOUNT_PATH` (absolute paths are also supported).
 *   `output_format`: (Optional) The format for the output results. Supported options: `markdown`, `json`, `html`, `chunks`. Default: `markdown`.
+*   `delete_input_on_success`: (Optional) Boolean. If true, deletes input files after they have been successfully processed. Default: `false`.
 
 #### Marker Processing Parameters
 
@@ -339,20 +342,22 @@ The worker includes adaptive parallelization to maximize GPU utilization (optimi
 
 When set to `auto` (default), the worker automatically optimizes parallelism based on:
 
-**Single Large PDF** (1 file):
+**Single File** (1 file):
 - `marker_workers=1` (no file-level parallelism needed)
-- `OLLAMA_CHUNK_WORKERS=4` (maximize chunk parallelism for large documents)
-- **Best for**: Processing 500+ page PDFs efficiently
+- `OLLAMA_CHUNK_WORKERS` (maximize chunk parallelism for large documents, capped at 4)
+- **Best for**: Processing single large PDFs efficiently
 
 **Small Batch** (2-3 files):
-- `marker_workers=2` (moderate file parallelism)
-- `OLLAMA_CHUNK_WORKERS=3-4` (high chunk parallelism)
+- `marker_workers` (moderate file parallelism, up to 2)
+- `OLLAMA_CHUNK_WORKERS` (high chunk parallelism, capped at 4)
 - **Best for**: Medium workloads with moderate-sized PDFs
 
 **Large Batch** (4+ files):
-- `marker_workers=3-4` (maximize marker file parallelism)
-- `OLLAMA_CHUNK_WORKERS=3-4` (maximize chunk parallelism, files processed sequentially)
+- `marker_workers` (maximize marker file parallelism, up to 4)
+- `OLLAMA_CHUNK_WORKERS` (maximize chunk parallelism, files processed sequentially)
 - **Best for**: Batch processing many small-to-medium PDFs
+
+*Note: All auto-calculations are bounded by available VRAM (TOTAL_VRAM_GB).*
 
 #### Performance Examples
 

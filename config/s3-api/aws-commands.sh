@@ -1,4 +1,9 @@
 #!/bin/bash
+# aws-commands.sh - S3 utility functions using AWS CLI.
+#
+# This script provides a set of wrapper functions for common S3 operations
+# (cp, sync, rm, mv, ls) tailored for use with RunPod and custom S3 endpoints.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

@@ -1,4 +1,9 @@
 #!/bin/bash
+# download-models-from-hf.sh - Downloads ML models from Hugging Face.
+#
+# This script iterates through provided model list files and downloads
+# each model using the Hugging Face CLI wrapper functions.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

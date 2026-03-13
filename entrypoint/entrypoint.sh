@@ -1,4 +1,9 @@
 #!/bin/bash
+# entrypoint.sh - Main entry point for the marker-ollama-worker Docker container.
+#
+# This script orchestrates the startup process, including environment validation
+# and launching the Python handler.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

@@ -35,7 +35,7 @@ Processes a single file using the `marker` converter.
 Main RunPod entry point.
 1.  **Setup**: Initializes `TextProcessor`, loads marker models, and loads prompt catalog.
 2.  **Configuration**: Resolves paths and environment variables (`VOLUME_ROOT_MOUNT_PATH`, `USE_POSTPROCESS_LLM`, etc.).
-3.  **Input Parsing**: Reads job inputs (`input_dir`, `output_dir`, `output_format`, `marker_workers`, `ollama_chunk_workers`, `ollama_block_correction_prompt`, `block_correction_prompt_key`).
+3.  **Input Parsing**: Reads job inputs (`input_dir`, `output_dir`, `output_format`, `marker_workers`, `ollama_chunk_workers`, `ollama_block_correction_prompt`, `block_correction_prompt_key`, `delete_input_on_success`).
 4.  **Prompt Resolution**: Uses custom prompt or looks up by key in the catalog.
 5.  **Path Resolution**: Constructs absolute paths using `VOLUME_ROOT_MOUNT_PATH` if relative.
 6.  **Validation**: Validates directories and cleanup settings.
@@ -50,7 +50,7 @@ Main RunPod entry point.
         *   Iterates through `processed_files` sequentially.
         *   Calls `ollama_worker.process_file` with chunk parallelism.
         *   Stops Ollama server after processing.
-9.  **Cleanup**: Deletes ONLY the original input files for which processing was successful.
+9.  **Cleanup**: Deletes ONLY the original input files for which processing was successful, if `delete_input_on_success` is enabled.
 10. **Return**: Returns a completion status message.
 
 ## Logic

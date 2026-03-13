@@ -1,4 +1,9 @@
 #!/bin/bash
+# release.sh - Automation script for the release process.
+#
+# This script automates versioning, changelog generation, and pushing
+# changes and tags to the remote repository.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

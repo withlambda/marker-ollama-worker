@@ -1,4 +1,9 @@
 #!/bin/bash
+# exec-model-download.sh - Orchestrates the model download process.
+#
+# This script builds a Docker image with Hugging Face tools and runs it
+# to download marker and ollama models into the local cache.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

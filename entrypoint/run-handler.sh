@@ -1,4 +1,9 @@
 #!/bin/bash
+# run-handler.sh - Script to launch the Python handler.
+#
+# This script executes the Python handler using gosu to run as the 'appuser'.
+# It uses unbuffered output to ensure logs appear immediately in container logs.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

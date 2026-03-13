@@ -13,6 +13,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+"""
+Main handler for the marker-ollama-worker.
+Orchestrates the conversion of documents using the marker-pdf library and
+optional post-processing using an Ollama-powered LLM.
+"""
+
 import logging
 import runpod
 import os
@@ -55,14 +61,20 @@ ARTIFACT_DICT: Optional[Dict[str, Any]] = None
 BLOCK_CORRECTION_PROMPT_LIBRARY: Dict[str, str] = {}
 
 def load_models() -> None:
-    """Loads marker models into memory if not already loaded."""
+    """
+    Loads marker models (surya, etc.) into VRAM if they are not already loaded.
+    Uses a global ARTIFACT_DICT to cache models for subsequent requests (Warm Start).
+    """
     global ARTIFACT_DICT
     if ARTIFACT_DICT is None:
         logger.info("Loading marker models into VRAM...")
         ARTIFACT_DICT = create_model_dict()
 
 def load_block_correction_prompts() -> None:
-    """Loads block correction prompt library from JSON file."""
+    """
+    Loads the block correction prompt library from a JSON file located in the same directory.
+    The prompts are stored in the global BLOCK_CORRECTION_PROMPT_LIBRARY dictionary.
+    """
     global BLOCK_CORRECTION_PROMPT_LIBRARY
     if BLOCK_CORRECTION_PROMPT_LIBRARY:
         return  # Already loaded
@@ -151,6 +163,15 @@ def marker_process_single_file(
 ) -> Tuple[bool, Path]:
     """
     Processes a single file using the provided converter and saves the output.
+
+    Args:
+        file_path (Path): Path to the input file (e.g., .pdf, .docx).
+        converter (PdfConverter): An instance of the marker PdfConverter.
+        output_base_path (str): The root directory where output for this file will be saved.
+        output_format (str): The desired output format (e.g., 'markdown', 'json').
+
+    Returns:
+        Tuple[bool, Path]: A tuple containing (success_boolean, output_file_path).
     """
     try:
         logger.info(f"Converting {file_path.name}...")
@@ -191,10 +212,31 @@ def marker_process_single_file(
         # Raise to propagate the failure
         raise e
 
-def handler(job: Dict[str, Any]) -> Dict[str, str]:
+def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """
     RunPod Serverless Handler.
     Processes input documents using 'marker-pdf', optionally using an Ollama LLM model.
+
+    Args:
+        job (Dict[str, Any]): The job request from RunPod. Expected keys:
+            - input (Dict[str, Any]):
+                - input_dir (str): Path to the input directory. Must contain one or more files in supported formats.
+                - output_dir (str): Path to the output directory.
+                - output_format (str, optional): One of 'json', 'markdown', 'html', 'chunks'. Default: 'markdown'.
+                - marker_workers (int, optional): Number of marker workers to use (file-level parallelism).
+                - delete_input_on_success (bool, optional): Whether to delete input files after successful processing. Default: False.
+                - ollama_block_correction_prompt (str, optional): Custom prompt for LLM post-processing.
+                - block_correction_prompt_key (str, optional): Key for predefined prompt in catalog.
+                - ollama_chunk_workers (int, optional): Number of parallel workers for chunk processing.
+                - marker_paginate_output (bool, optional): Default: False.
+                - marker_force_ocr (bool, optional): Default: False.
+                - marker_disable_multiprocessing (bool, optional): Default: False.
+                - marker_disable_image_extraction (bool, optional): Default: False.
+                - marker_page_range (str, optional): e.g. "0-10".
+                - marker_processors (str, optional): Comma-separated list of processor classes.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the status and results of the job.
     """
 
     # --- Configuration ---
@@ -239,6 +281,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
     marker_workers = job_input.get('marker_workers')
     if marker_workers is not None:
         marker_workers = int(marker_workers)
+
+    delete_input_on_success = text_processor.to_bool(job_input.get('delete_input_on_success', False))
 
     # Resolve block correction prompt (priority: direct prompt > prompt key > empty)
     ollama_block_correction_prompt = job_input.get("ollama_block_correction_prompt", "")
@@ -404,13 +448,14 @@ def handler(job: Dict[str, Any]) -> Dict[str, str]:
                 ollama_worker.stop_server()
 
     # Cleanup: Delete original file on success
-    # Only delete if we reached here successfully
-    for file_to_process in successful_inputs:
-        try:
-            file_to_process.unlink()
-            logger.info(f"Deleted input file: {file_to_process.name}")
-        except Exception as e:
-            logger.warning(f"Failed to delete input file {file_to_process}: {e}")
+    # Only delete if we reached here successfully and delete_input_on_success is enabled
+    if delete_input_on_success:
+        for file_to_process in successful_inputs:
+            try:
+                file_to_process.unlink()
+                logger.info(f"Deleted input file: {file_to_process.name}")
+            except Exception as e:
+                logger.warning(f"Failed to delete input file {file_to_process}: {e}")
 
     return {
         "status": "completed",

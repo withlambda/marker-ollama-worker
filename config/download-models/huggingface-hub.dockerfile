@@ -13,6 +13,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# Dockerfile for a lightweight container to download Hugging Face models.
+# It uses the huggingface_hub Python library to pull models into a cache directory.
+
 ARG PYTHON_VERSION
 FROM python:${PYTHON_VERSION}-slim
 

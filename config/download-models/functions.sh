@@ -1,4 +1,9 @@
 #!/bin/bash
+# functions.sh - Helper functions for model downloading.
+#
+# This script contains common utility functions used by the model download
+# process, such as Hugging Face CLI wrappers and file list processing.
+#
 # Copyright (C) 2026 withLambda
 #
 # This program is free software: you can redistribute it and/or modify

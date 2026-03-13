@@ -54,6 +54,19 @@ class TextProcessor:
     """
     @staticmethod
     def to_bool(value: Any) -> bool:
+        """
+        Parses various input types into a boolean value.
+
+        Args:
+            value (Any): The value to parse (str, int, float, or bool).
+
+        Returns:
+            bool: The parsed boolean value.
+
+        Raises:
+            TypeError: If the input value is not a string, number, or boolean.
+            ValueError: If the string/number cannot be unambiguously parsed as a boolean.
+        """
         if isinstance(value, bool):
             return value
         if value is None:

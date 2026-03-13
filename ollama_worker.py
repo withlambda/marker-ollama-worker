@@ -12,7 +12,20 @@ import ollama
 logger = logging.getLogger(__name__)
 
 class OllamaWorker:
+    """
+    Manages the Ollama server lifecycle and handles LLM text processing tasks.
+
+    This class provides methods to:
+    - Start and stop the Ollama server in a separate process.
+    - Ensure the required LLM model is available (pull or build from Hugging Face).
+    - Process text chunks in parallel using the Ollama model for OCR correction.
+    - Handle model unloading to free up VRAM for other tasks.
+    """
     def __init__(self) -> None:
+        """
+        Initializes the OllamaWorker with the host from OLLAMA_BASE_URL
+        and sets up the Ollama client.
+        """
         self.host: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         # Configure the ollama client to point to our local instance
         self.client: ollama.Client = ollama.Client(host=self.host)
@@ -20,7 +33,14 @@ class OllamaWorker:
         self.process: Optional[subprocess.Popen] = None
 
     def start_server(self) -> None:
-        """Starts the Ollama server in the background."""
+        """
+        Starts the Ollama server in the background.
+        Opens a log file 'ollama.log' to capture server output and stderr.
+        Waits for the server to be ready before returning.
+
+        Raises:
+            RuntimeError: If the Ollama server fails to start or become responsive.
+        """
         if self.process is not None:
             logger.info("Ollama server is already running.")
             return
@@ -83,7 +103,15 @@ class OllamaWorker:
         self,
         max_retries: int = 30
     ) -> None:
-        """Waits for the Ollama server to be responsive."""
+        """
+        Waits for the Ollama server to be responsive by polling the list API.
+
+        Args:
+            max_retries (int): Maximum number of polling attempts (2 seconds between attempts).
+
+        Raises:
+            RuntimeError: If the Ollama server fails to start or become responsive within the timeout.
+        """
         logger.info("Waiting for Ollama to start...")
         for i in range(max_retries):
             try:
@@ -104,8 +132,14 @@ class OllamaWorker:
 
     def ensure_model(self) -> None:
         """
-        Ensures the configured model exists.
-        Pulls it if specified by OLLAMA_MODEL, or builds it from HF cache if not.
+        Ensures the configured model exists in the Ollama instance.
+
+        If OLLAMA_MODEL is set, it checks if the model exists and pulls it if not.
+        If OLLAMA_MODEL is NOT set, it attempts to build a model from a local Hugging Face
+        model cache directory, as specified by other environment variables.
+
+        Raises:
+            RuntimeError: If pulling or creating the model fails.
         """
         model_name = os.environ.get("OLLAMA_MODEL")
 
@@ -129,6 +163,15 @@ class OllamaWorker:
         self,
         model_name: str
     ) -> bool:
+        """
+        Checks if a model with the given name exists in the local Ollama registry.
+
+        Args:
+            model_name (str): Name of the model to check.
+
+        Returns:
+            bool: True if the model (or a tagged version) exists, False otherwise.
+        """
         try:
             response = self.client.list()
             # Handle both list of dicts and object with models attribute
@@ -156,6 +199,16 @@ class OllamaWorker:
             return False
 
     def _build_from_hf(self) -> None:
+        """
+        Builds an Ollama model from GGUF files found in a Hugging Face cache.
+
+        Uses HF_HOME, OLLAMA_HUGGING_FACE_MODEL_NAME, and OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION
+        environment variables to locate the model files and construct the Modelfile.
+
+        Raises:
+            FileNotFoundError: If the model directory, snapshots, or GGUF files are missing.
+            RuntimeError: If the Ollama model creation fails.
+        """
         hf_home = os.environ.get("HF_HOME")
         model_name = os.environ.get("OLLAMA_HUGGING_FACE_MODEL_NAME")
         quantization = os.environ.get("OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION")
@@ -462,7 +515,10 @@ class OllamaWorker:
         return chunks
 
     def unload_model(self) -> None:
-        """Unloads the model from VRAM by sending an empty request with keep_alive=0"""
+        """
+        Unloads the current model from VRAM by sending a generate request with keep_alive=0.
+        This allows other processes (like marker) to utilize the VRAM.
+        """
         model = os.environ.get("OLLAMA_MODEL")
         if not model:
             return
