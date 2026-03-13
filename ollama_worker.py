@@ -326,8 +326,8 @@ class OllamaWorker:
     def process_text(
         self,
         text: str,
-        prompt_template: Optional[str] = None,
-        max_chunk_workers: Optional[int] = None
+        prompt_template: Optional[str],
+        max_chunk_workers: int
     ) -> str:
         """
         Post-processes text using the loaded Ollama model.
@@ -338,7 +338,6 @@ class OllamaWorker:
             text (str): The text to process
             prompt_template (str): Optional custom prompt template
             max_chunk_workers (int): Maximum number of parallel workers for chunk processing.
-                                    If None, uses OLLAMA_CHUNK_WORKERS env var or auto-detection.
 
         Returns:
             str: The processed text
@@ -356,7 +355,7 @@ class OllamaWorker:
         )
 
         # Determine optimal worker count
-        max_workers = self._get_optimal_chunk_workers(len(chunks), max_chunk_workers)
+        max_workers =  max(1, int(max_chunk_workers))
 
         logger.info(f"Processing {len(chunks)} chunks with Ollama using {max_workers} parallel workers...")
 
@@ -391,8 +390,8 @@ class OllamaWorker:
     def process_file(
         self,
         file_path: Path,
-        prompt_template: Optional[str] = None,
-        max_chunk_workers: Optional[int] = None
+        prompt_template: Optional[str],
+        max_chunk_workers: int,
     ) -> bool:
         """
         Processes a single file with the Ollama model.
@@ -402,7 +401,6 @@ class OllamaWorker:
             file_path (Path): Path to the file to process
             prompt_template (str): Optional custom prompt template
             max_chunk_workers (int): Maximum number of parallel workers for chunk processing.
-                                    If None, uses OLLAMA_CHUNK_WORKERS env var or auto-detection.
 
         Returns:
             bool: True if processing was successful, False otherwise
@@ -426,49 +424,6 @@ class OllamaWorker:
         except Exception as e:
             logger.error(f"Failed to post-process {file_path.name}: {e}")
             return False
-
-    @staticmethod
-    def _get_optimal_chunk_workers(num_chunks: int, max_chunk_workers: Optional[int] = None) -> int:
-        """
-        Determines the optimal number of parallel workers for chunk processing.
-
-        Args:
-            num_chunks (int): Number of chunks to process
-            max_chunk_workers (int): Explicitly requested worker count. If None, uses env var or auto-detection.
-
-        Returns:
-            int: Optimal number of workers
-        """
-        # Use explicit parameter if provided
-        if max_chunk_workers is not None:
-            # Respect chunk count - no point in more workers than chunks
-            return min(max(1, max_chunk_workers), num_chunks)
-
-        # Check environment variable
-        chunk_workers_env = os.environ.get("OLLAMA_CHUNK_WORKERS", "auto").strip().lower()
-
-        if chunk_workers_env != "auto":
-            try:
-                configured_workers = max(1, int(chunk_workers_env))
-                # Respect chunk count - no point in more workers than chunks
-                return min(configured_workers, num_chunks)
-            except ValueError:
-                logger.warning(f"Invalid OLLAMA_CHUNK_WORKERS value: {chunk_workers_env}, using auto")
-
-        # Auto-detection based on chunk count and estimated VRAM
-        total_vram = int(os.environ.get("TOTAL_VRAM_GB", "24"))
-        vram_per_worker = int(os.environ.get("OLLAMA_VRAM_PER_WORKER", "5"))
-
-        # Calculate max workers based on VRAM
-        max_vram_workers = max(1, (total_vram - 4) // vram_per_worker)  # Reserve 4GB for overhead
-
-        # Limit by number of chunks (no point in more workers than chunks)
-        optimal_workers = min(max_vram_workers, num_chunks)
-
-        # Cap at reasonable maximum (4 workers)
-        optimal_workers = min(optimal_workers, 4)
-
-        return optimal_workers
 
     @staticmethod
     def _chunk_text(

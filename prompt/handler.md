@@ -24,12 +24,13 @@ Loads the prompt catalog from `block_correction_prompts.json` into `BLOCK_CORREC
 #### `calculate_optimal_workers(num_files: int, use_postprocess_llm: bool, marker_workers_override: Optional[int] = None) -> Tuple[int, int]`
 Calculates optimal worker counts for Marker (`marker_workers`) and Ollama (`ollama_chunk_workers`) based on workload and available VRAM (`TOTAL_VRAM_GB`, `MARKER_VRAM_PER_WORKER`, `OLLAMA_VRAM_PER_WORKER`).
 
-#### `marker_process_single_file(file_path: Path, converter: PdfConverter, output_base_path: str, output_format: str) -> Tuple[bool, Path]`
-Processes a single file using the `marker` converter.
-1.  Converts file to text and images.
-2.  Creates output subfolder named after the file.
-3.  Saves output file (format-specific extension), metadata JSON, and extracted images.
-4.  Returns a success flag and the path to the generated output file.
+#### `marker_process_single_file(file_path: Path, artifact_dict: Optional[Dict[str, Any]], marker_config: Dict[str, Any], output_base_path: str, output_format: str) -> Tuple[bool, Path]`
+Processes a single file using a freshly initialized `marker` converter (for thread safety).
+1.  Initializes `PdfConverter` with shared `artifact_dict` and task-specific `marker_config`.
+2.  Converts file to text and images.
+3.  Creates output subfolder named after the file.
+4.  Saves output file (format-specific extension), metadata JSON, and extracted images.
+5.  Returns a success flag and the path to the generated output file.
 
 #### `handler(job: Dict[str, Any]) -> Dict[str, str]`
 Main RunPod entry point.
@@ -40,9 +41,9 @@ Main RunPod entry point.
 5.  **Path Resolution**: Constructs absolute paths using `VOLUME_ROOT_MOUNT_PATH` if relative.
 6.  **Validation**: Validates directories and cleanup settings.
 7.  **Marker Conversion**:
-    *   Initializes `PdfConverter`.
+    *   Prepares `marker_config` with formatting and behavior settings.
     *   Finds valid files in the input directory.
-    *   Uses `ThreadPoolExecutor` and `as_completed` to process files in parallel.
+    *   Uses `ThreadPoolExecutor` and `as_completed` to process files in parallel, passing configuration to each task.
     *   Tracks `successful_inputs` and `processed_files`.
 8.  **LLM Post-processing**:
     *   If enabled and `processed_files` is not empty:

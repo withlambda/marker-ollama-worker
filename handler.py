@@ -125,15 +125,8 @@ def calculate_optimal_workers(
     # Parse marker_workers
     if marker_workers_override is not None:
         marker_workers = max(1, marker_workers_override)
-    # Auto-detection logic for marker workers
-    elif num_files == 1:
-        # Single file - use 1 marker worker
-        marker_workers = 1
-    elif num_files <= 3:
-        # Small batch - moderate parallelism
-        marker_workers = min(2, num_files, (total_vram - VRAM_RESERVE_GB) // marker_vram_per_worker)
     else:
-        # Large batch - maximize marker parallelism
+        # Linear/Consistent scaling for marker workers
         marker_workers = min(4, num_files, (total_vram - VRAM_RESERVE_GB) // marker_vram_per_worker)
 
     marker_workers = max(1, marker_workers)
@@ -157,7 +150,8 @@ def calculate_optimal_workers(
 
 def marker_process_single_file(
     file_path: Path,
-    converter: PdfConverter,
+    artifact_dict: Optional[Dict[str, Any]],
+    marker_config: Dict[str, Any],
     output_base_path: str,
     output_format: str
 ) -> Tuple[bool, Path]:
@@ -166,7 +160,8 @@ def marker_process_single_file(
 
     Args:
         file_path (Path): Path to the input file (e.g., .pdf, .docx).
-        converter (PdfConverter): An instance of the marker PdfConverter.
+        artifact_dict (Optional[Dict[str, Any]]): Cached marker models.
+        marker_config (Dict[str, Any]): Configuration for the marker converter.
         output_base_path (str): The root directory where output for this file will be saved.
         output_format (str): The desired output format (e.g., 'markdown', 'json').
 
@@ -175,6 +170,17 @@ def marker_process_single_file(
     """
     try:
         logger.info(f"Converting {file_path.name}...")
+
+        # Initialize converter for each file (safer for multi-threading)
+        config_parser = ConfigParser(marker_config)
+        converter = PdfConverter(
+            config=config_parser.generate_config_dict(),
+            artifact_dict=artifact_dict,
+            processor_list=config_parser.get_processors(),
+            renderer=config_parser.get_renderer(),
+            llm_service=None # No internal LLM service
+        )
+
         rendered = converter(str(file_path))
         full_text, out_meta, images = text_from_rendered(rendered)
 
@@ -255,7 +261,6 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     load_models()
     # Load block correction prompt catalog
     load_block_correction_prompts()
-    global ARTIFACT_DICT
 
     # Load job input
     job_input = job.get("input", {})
@@ -263,7 +268,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     # Read environment variables
     storage_bucket_path = os.environ.get('VOLUME_ROOT_MOUNT_PATH')
     if not storage_bucket_path:
-         raise ValueError("Environment variable VOLUME_ROOT_MOUNT_PATH is not set")
+        raise ValueError("Environment variable VOLUME_ROOT_MOUNT_PATH is not set")
 
     cleanup_output_dir = text_processor.to_bool(os.environ.get('CLEANUP_OUTPUT_DIR_BEFORE_START'))
 
@@ -285,10 +290,10 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     delete_input_on_success = text_processor.to_bool(job_input.get('delete_input_on_success', False))
 
     # Resolve block correction prompt (priority: direct prompt > prompt key > empty)
-    ollama_block_correction_prompt = job_input.get("ollama_block_correction_prompt", "")
-    if not ollama_block_correction_prompt:
-        # Try to lookup by key if direct prompt not provided
-        block_correction_prompt_key = job_input.get("block_correction_prompt_key", "")
+    ollama_block_correction_prompt = job_input.get("ollama_block_correction_prompt")
+    if not ollama_block_correction_prompt or ollama_block_correction_prompt is None:
+        # Try to look up by key if direct prompt not provided
+        block_correction_prompt_key = job_input.get("block_correction_prompt_key")
         if block_correction_prompt_key:
             if block_correction_prompt_key in BLOCK_CORRECTION_PROMPT_LIBRARY:
                 ollama_block_correction_prompt = BLOCK_CORRECTION_PROMPT_LIBRARY[block_correction_prompt_key]
@@ -339,17 +344,6 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         "use_llm": False # Explicitly disable Marker's internal LLM logic
     }
 
-    # Initialize ConfigParser and Converter
-    config_parser = ConfigParser(marker_config)
-
-    converter = PdfConverter(
-        config=config_parser.generate_config_dict(),
-        artifact_dict=ARTIFACT_DICT,
-        processor_list=config_parser.get_processors(),
-        renderer=config_parser.get_renderer(),
-        llm_service=None # No internal LLM service
-    )
-
     logger.info("--- Processing Job ---")
     logger.info(f"Input Path: {input_path}")
     logger.info(f"Output Path: {output_path}")
@@ -390,7 +384,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         with ThreadPoolExecutor(max_workers=optimal_marker_workers) as executor:
             # Future mapping to file for error tracking if needed
             future_to_file = {
-                executor.submit(marker_process_single_file, file_to_process, converter, output_path, output_format): file_to_process
+                executor.submit(marker_process_single_file, file_to_process, ARTIFACT_DICT, marker_config, output_path, output_format): file_to_process
                 for file_to_process in files_to_process
             }
 

@@ -133,7 +133,7 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
 
 *   `input_dir`: **Required**. The path to the directory to process, relative to `VOLUME_ROOT_MOUNT_PATH` (absolute paths are also supported). The directory must contain one or more files in supported formats: PDF, PPTX, DOCX, XLSX, HTML, EPUB.
 *   `output_dir`: **Required**. The directory where the processed output will be saved, relative to `VOLUME_ROOT_MOUNT_PATH` (absolute paths are also supported).
-*   `output_format`: (Optional) The format for the output results. Supported options: `markdown`, `json`, `html`, `chunks`. Default: `markdown`.
+*   `output_format`: (Optional) The format for the output results. Supported options: `markdown`, `json`, `html`, `chunks`. Default: `markdown`. **Note**: LLM post-processing on `json` and `html` formats is experimental and may produce invalid syntax due to text chunking.
 *   `delete_input_on_success`: (Optional) Boolean. If true, deletes input files after they have been successfully processed. Default: `false`.
 
 #### Marker Processing Parameters
@@ -150,7 +150,7 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
 
 *   `ollama_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM. Takes priority over `block_correction_prompt_key`.
 *   `block_correction_prompt_key`: (Optional) A key referencing a predefined prompt from the [Block Correction Prompt Catalog](#block-correction-prompt-catalog). Ignored if `ollama_block_correction_prompt` is provided.
-*   `ollama_chunk_workers`: (Optional) Number of text chunks to process in parallel during LLM phase. Overrides `OLLAMA_CHUNK_WORKERS` env var. Default: auto-calculated.
+*   `ollama_chunk_workers`: (Optional) Number of text chunks to process in parallel during LLM phase. Default: auto-calculated.
 
 #### Performance Tuning Examples
 
@@ -158,13 +158,13 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
 ```json
 {
   "input": {
-    "input_dir": "input/large_book.pdf",
+    "input_dir": "input/",
     "output_dir": "output",
     "ollama_chunk_workers": 4
   }
 }
 ```
-This maximizes chunk-level parallelism for faster LLM processing of large documents.
+This maximizes chunk-level parallelism for faster LLM processing of large documents. (Note: `input/` should contain the single PDF file).
 
 **Example 2: Batch of Small PDFs**
 ```json
@@ -225,18 +225,18 @@ The worker includes a built-in catalog of specialized OCR correction prompts opt
 
 #### Available Prompt Keys
 
-| Key | Name | Description |
-|:----|:-----|:------------|
-| `fraktur_german_19c` | 19th Century German (Fraktur/Gothic Script) | Historical German texts in Fraktur font with archaic orthography. Preserves 'th', 'y', 'c', long-s (ſ), and handles visual confusions. |
-| `english_handwriting` | English Handwriting (Modern Cursive) | Modern English cursive/script documents. Corrects connected letters, ambiguous letterforms, and stroke variations. |
-| `german_handwriting` | German Handwriting (Modern Cursive) | Modern German cursive/script, including Sütterlin influence. Handles umlauts, ß, and German ligatures. |
-| `french_handwriting` | French Handwriting (Modern Cursive) | Modern French cursive/script. Restores accents (é, è, ê, à, ç), handles elisions and French orthography. |
-| `spanish_handwriting` | Spanish Handwriting (Modern Cursive) | Modern Spanish cursive/script. Handles accents (á, é, í, ó, ú), ñ, and inverted punctuation (¿¡). |
-| `modern_english_general` | Modern English (General Purpose) | Standard modern English printed documents. Fixes common OCR errors and layout artifacts. |
-| `scientific_mathematical` | Scientific and Mathematical Texts | Documents with equations, formulas, and technical notation. Reconstructs mathematical expressions and LaTeX notation. |
-| `legal_documents` | Legal Documents (Formal Text) | Formal legal texts with precise terminology, enumeration, and structure. Preserves Latin legal terms. |
-| `historical_english` | Historical English (Pre-20th Century) | Historical English (16th-19th centuries) with archaic spelling, long-s (ſ), and period grammar. |
-| `asian_languages_cjk` | Asian Languages (Chinese, Japanese, Korean) | CJK character recognition with corrections for visually similar characters and mixed scripts. |
+| Key                       | Name                                        | Description                                                                                                                            |
+|:--------------------------|:--------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------|
+| `fraktur_german_19c`      | 19th Century German (Fraktur/Gothic Script) | Historical German texts in Fraktur font with archaic orthography. Preserves 'th', 'y', 'c', long-s (ſ), and handles visual confusions. |
+| `english_handwriting`     | English Handwriting (Modern Cursive)        | Modern English cursive/script documents. Corrects connected letters, ambiguous letterforms, and stroke variations.                     |
+| `german_handwriting`      | German Handwriting (Modern Cursive)         | Modern German cursive/script, including Sütterlin influence. Handles umlauts, ß, and German ligatures.                                 |
+| `french_handwriting`      | French Handwriting (Modern Cursive)         | Modern French cursive/script. Restores accents (é, è, ê, à, ç), handles elisions and French orthography.                               |
+| `spanish_handwriting`     | Spanish Handwriting (Modern Cursive)        | Modern Spanish cursive/script. Handles accents (á, é, í, ó, ú), ñ, and inverted punctuation (¿¡).                                      |
+| `modern_english_general`  | Modern English (General Purpose)            | Standard modern English printed documents. Fixes common OCR errors and layout artifacts.                                               |
+| `scientific_mathematical` | Scientific and Mathematical Texts           | Documents with equations, formulas, and technical notation. Reconstructs mathematical expressions and LaTeX notation.                  |
+| `legal_documents`         | Legal Documents (Formal Text)               | Formal legal texts with precise terminology, enumeration, and structure. Preserves Latin legal terms.                                  |
+| `historical_english`      | Historical English (Pre-20th Century)       | Historical English (16th-19th centuries) with archaic spelling, long-s (ſ), and period grammar.                                        |
+| `asian_languages_cjk`     | Asian Languages (Chinese, Japanese, Korean) | CJK character recognition with corrections for visually similar characters and mixed scripts.                                          |
 
 #### Usage Examples
 
@@ -317,7 +317,7 @@ Output Formatting: Provide ONLY the corrected text in clean Markdown.
 | Variable                                 | Description                                           | Default                                          |
 |:-----------------------------------------|:------------------------------------------------------|:-------------------------------------------------|
 | `VOLUME_ROOT_MOUNT_PATH`                 | Base path for storage (Required).                     | **None** (Must be set)                           |
-| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing for the output results. | `true`                                           |
+| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing for the output results.    | `true`                                           |
 | `CLEANUP_OUTPUT_DIR_BEFORE_START`        | Delete output directory before starting.              | `false`                                          |
 | `OLLAMA_MODEL`                           | Name of the Ollama model to use/pull.                 | (Optional)                                       |
 | `OLLAMA_HUGGING_FACE_MODEL_NAME`         | HF Model ID to build from (if `OLLAMA_MODEL` unset).  | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
@@ -328,15 +328,14 @@ Output Formatting: Provide ONLY the corrected text in clean Markdown.
 
 ### Performance Tuning Variables
 
-The worker includes adaptive parallelization to maximize GPU utilization (optimized for 24GB VRAM). These settings are automatically calculated based on workload, but can be manually overridden.
+The worker includes adaptive parallelization to maximize GPU utilization (optimized for 24GB VRAM). These settings are automatically calculated based on workload but can be manually overridden.
 
-| Variable                  | Description                                                                                          | Default | Recommended Range |
-|:--------------------------|:-----------------------------------------------------------------------------------------------------|:--------|:------------------|
-| `TOTAL_VRAM_GB`           | Total VRAM available on your GPU (used for auto-tuning worker counts).                               | `24`    | `8-80`            |
-| `OLLAMA_CHUNK_WORKERS`    | Number of text chunks to process in parallel during Ollama LLM phase.                                | `auto`  | `1-4` or `auto`   |
-| `OLLAMA_CHUNK_SIZE`       | Characters per chunk for LLM processing. Smaller = more parallelism, larger = better context.        | `4000`  | `2000-8000`       |
-| `MARKER_VRAM_PER_WORKER`  | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.                   | `5`     | `3-6`             |
-| `OLLAMA_VRAM_PER_WORKER`  | Estimated VRAM per Ollama worker (GB). Used for auto-calculating `OLLAMA_CHUNK_WORKERS`.             | `5`     | `4-8`             |
+| Variable                  | Description                                                                                   | Default | Recommended Range |
+|:--------------------------|:----------------------------------------------------------------------------------------------|:--------|:------------------|
+| `TOTAL_VRAM_GB`           | Total VRAM available on your GPU (used for auto-tuning worker counts).                        | `24`    | `8-80`            |
+| `OLLAMA_CHUNK_SIZE`       | Characters per chunk for LLM processing. Smaller = more parallelism, larger = better context. | `4000`  | `2000-8000`       |
+| `MARKER_VRAM_PER_WORKER`  | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.            | `5`     | `3-6`             |
+| `OLLAMA_VRAM_PER_WORKER`  | Estimated VRAM per Ollama worker (GB). Used for auto-calculating `ollama_chunk_workers`.      | `5`     | `4-8`             |
 
 #### Adaptive Worker Scaling (Auto Mode)
 
@@ -344,44 +343,44 @@ When set to `auto` (default), the worker automatically optimizes parallelism bas
 
 **Single File** (1 file):
 - `marker_workers=1` (no file-level parallelism needed)
-- `OLLAMA_CHUNK_WORKERS` (maximize chunk parallelism for large documents, capped at 4)
+- `ollama_chunk_workers` (maximize chunk parallelism for large documents, capped at 4)
 - **Best for**: Processing single large PDFs efficiently
 
 **Small Batch** (2-3 files):
 - `marker_workers` (moderate file parallelism, up to 2)
-- `OLLAMA_CHUNK_WORKERS` (high chunk parallelism, capped at 4)
+- `ollama_chunk_workers` (high chunk parallelism, capped at 4)
 - **Best for**: Medium workloads with moderate-sized PDFs
 
 **Large Batch** (4+ files):
 - `marker_workers` (maximize marker file parallelism, up to 4)
-- `OLLAMA_CHUNK_WORKERS` (maximize chunk parallelism, files processed sequentially)
+- `ollama_chunk_workers` (maximize chunk parallelism, files processed sequentially)
 - **Best for**: Batch processing many small-to-medium PDFs
 
 *Note: All auto-calculations are bounded by available VRAM (TOTAL_VRAM_GB).*
 
 #### Performance Examples
 
-| Scenario                  | Default (Sequential) | Optimized (Adaptive) | Speedup |
-|:--------------------------|:---------------------|:---------------------|:--------|
-| 1 × 500-page PDF          | ~4.3 min             | ~2.1 min             | **2.0x** |
-| 3 × 200-page PDFs         | ~7.5 min             | ~2.8 min             | **2.7x** |
-| 10 × 50-page PDFs         | ~15 min              | ~3.9 min             | **3.8x** |
+| Scenario          | Default (Sequential) | Optimized (Adaptive) | Speedup  |
+|:------------------|:---------------------|:---------------------|:---------|
+| 1 × 500-page PDF  | ~4.3 min             | ~2.1 min             | **2.0x** |
+| 3 × 200-page PDFs | ~7.5 min             | ~2.8 min             | **2.7x** |
+| 10 × 50-page PDFs | ~15 min              | ~3.9 min             | **3.8x** |
 
 #### Manual Tuning
 
 For specific hardware or workloads, you can override auto-tuning:
 
 ```bash
-# Example: 48GB VRAM GPU - maximize parallelism
+# Example: 48GB VRAM GPU, medium LLM models - maximize parallelism
 TOTAL_VRAM_GB=48
-OLLAMA_CHUNK_WORKERS=6
+OLLAMA_VRAM_PER_WORKER=5
 
-# Example: 16GB VRAM GPU - conservative settings
+# Example: 16GB VRAM GPU, small LLM models - conservative settings
 TOTAL_VRAM_GB=16
-OLLAMA_CHUNK_WORKERS=2
+OLLAMA_VRAM_PER_WORKER=2
 
-# Example: Disable LLM parallelization (troubleshooting)
-OLLAMA_CHUNK_WORKERS=1
+# Example: Disable LLM parallelization via "ollama_chunk_workers=1" in json input of serverless endpoint (troubleshooting)
+ollama_chunk_workers=1
 ```
 
 ### Additional Configuration Variables
