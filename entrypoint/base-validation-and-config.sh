@@ -63,15 +63,32 @@ export OLLAMA_MODELS_DIR="${OLLAMA_MODELS_DIR:-"/.ollama/models"}"
 # Normalize path: Replace multiple slashes with a single slash
 export OLLAMA_MODELS="$(echo "${VOLUME_ROOT_MOUNT_PATH}/${OLLAMA_MODELS_DIR}" | sed 's#//*#/#g')"
 
-# Ensure the models directory exists.
-# If it's a mounted volume, this might already exist, but mkdir -p is safe.
+# Ensure the required directories exist and are accessible by appuser.
+# If it's a mounted volume, these might already exist, but mkdir -p is safe.
 mkdir -p "$OLLAMA_MODELS"
+mkdir -p "$HF_HOME"
 
-# Ensure the directory is owned by appuser if we're running as root
+# Ensure the directories are owned by appuser if we're running as root.
+# Note: chown might fail on certain network filesystems (e.g., RunPod volumes).
+# We try it, but do not fail if it is not supported by the underlying filesystem.
 if [ "$(id -u)" -eq 0 ]; then
     # Check if appuser exists before chowning
     if id "appuser" >/dev/null 2>&1; then
-        chown -R appuser:appgroup "$OLLAMA_MODELS"
+        echo "Updating ownership of ${OLLAMA_MODELS} and ${HF_HOME} to appuser..."
+        # Using --silent to avoid spamming logs if many files fail,
+        # and || true to ensure the script continues.
+        chown -R --silent appuser:appgroup "$OLLAMA_MODELS" "$HF_HOME" || true
+
+        # As a fallback, try to make them writable by everyone if chown failed
+        # but only if appuser still cannot write to them.
+        if ! gosu appuser test -w "$OLLAMA_MODELS"; then
+             echo "Warning: Could not change ownership of ${OLLAMA_MODELS}. Trying chmod as fallback..."
+             chmod -R 777 "$OLLAMA_MODELS" 2>/dev/null || true
+        fi
+        if ! gosu appuser test -w "$HF_HOME"; then
+             echo "Warning: Could not change ownership of ${HF_HOME}. Trying chmod as fallback..."
+             chmod -R 777 "$HF_HOME" 2>/dev/null || true
+        fi
     fi
 fi
 

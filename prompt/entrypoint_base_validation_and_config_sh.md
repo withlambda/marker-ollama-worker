@@ -12,7 +12,10 @@ This script performs initial validation of environment variables and sets up con
     *   Sets `HF_HOME` to `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache` if not already set.
     *   Sets `OLLAMA_MODELS_DIR` to `/.ollama/models` if not already set.
     *   Sets `OLLAMA_MODELS` to `${VOLUME_ROOT_MOUNT_PATH}${OLLAMA_MODELS_DIR}`.
-    *   Creates the `${OLLAMA_MODELS}` directory.
+    *   Creates the `${OLLAMA_MODELS}` and `${HF_HOME}` directories.
+    *   Ensures that both directories are owned by `appuser` (UID 1000) if the script is running as root.
+    *   Gracefully handles cases where ownership changes (`chown`) are not supported (e.g., on network volumes like RunPod) by using `--silent` and ignoring errors (`|| true`).
+    *   If ownership change fails and the `appuser` still cannot write to the directories, attempts a fallback `chmod -R 777` (also ignoring errors).
 3.  **Conditional Checks**:
     *   If `OLLAMA_MODEL` is not set and `USE_POSTPROCESS_LLM` is "true":
         *   Checks if `OLLAMA_HUGGING_FACE_MODEL_NAME` is set. Exits with error if not.
