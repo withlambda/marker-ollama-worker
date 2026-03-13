@@ -70,10 +70,9 @@ RUN mkdir -p ${XDG_CACHE_HOME} \
 
 COPY *.py block_correction_prompts.json entrypoint/ ./
 
-# 7. Create Non-Root User
-# We create a user named 'appuser' with UID 1000
+# 7. Create Non-Root User (UID 1000) with the name appuser
+# Ensure appuser owns the app and cache
 RUN	groupadd -r appgroup && useradd -r -g appgroup -u 1000 -m -d /home/appuser appuser && \
-    # Fix permissions: Ensure appuser owns the app and cache
     chown -R appuser:appgroup /app /home/appuser && \
     chmod +x entrypoint.sh
 
