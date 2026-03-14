@@ -40,7 +40,7 @@ The main class for interacting with Ollama.
     Builds an Ollama model from a GGUF file found in the Hugging Face cache (`HF_HOME`).
     1. Scans the HF hub directory for the specified model and quantization.
     2. Constructs a `Modelfile`.
-    3. Calls `client.create` to register the model in Ollama.
+    3. Calls the Ollama CLI (`ollama create`) to register the model in Ollama.
 
 *   `process_text(self, text: str, prompt_template: Optional[str] = None, max_chunk_workers: Optional[int] = None) -> str`:
     Primary interface for post-processing text.

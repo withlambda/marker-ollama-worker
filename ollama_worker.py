@@ -327,9 +327,24 @@ class OllamaWorker:
             modelfile_content += f"ADAPTER {adapter_file.absolute()}\n"
 
         try:
-            # Use client.create instead of subprocess
-            self.client.create(model=final_model_name, modelfile=modelfile_content)
+            # Use subprocess to create the model, as some versions of the Python SDK
+            # have issues with the 'modelfile' keyword argument.
+            # We ensure OLLAMA_HOST is set so it connects to the local server.
+            env = os.environ.copy()
+            env["OLLAMA_HOST"] = self.host
+
+            logger.info(f"Creating model '{final_model_name}' using Ollama CLI...")
+            subprocess.run(
+                ["ollama", "create", final_model_name, "-f", "-"],
+                input=modelfile_content.encode(),
+                check=True,
+                env=env,
+                capture_output=True
+            )
             logger.info(f"Successfully created model '{final_model_name}'")
+        except subprocess.CalledProcessError as e:
+            error_detail = e.stderr.decode().strip() if e.stderr else str(e)
+            raise RuntimeError(f"Failed to create model '{final_model_name}' via CLI: {error_detail}")
         except Exception as e:
             raise RuntimeError(f"Failed to create model '{final_model_name}': {e}")
 
