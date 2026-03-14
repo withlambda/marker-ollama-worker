@@ -12,27 +12,12 @@ The main class for interacting with Ollama.
 
 ##### Methods
 
-*   `__init__(self, **kwargs) -> None`:
-    Initializes the Ollama client and worker configuration. Accepts optional keyword arguments for all configuration variables:
-    - `host`: Ollama server host (default from `OLLAMA_BASE_URL` or `OLLAMA_HOST`).
-    - `model`: Ollama model name (default from `OLLAMA_MODEL`).
-    - `max_retries`: Number of retries for LLM requests (default: 3).
-    - `retry_delay`: Initial delay between retries (default: 2.0s).
-    - `context_length`: Context window size (default: 4096).
-    - `flash_attention`: Enable/disable flash attention (default: "1").
-    - `keep_alive`: Model keep-alive duration (default: "-1").
-    - `log_dir`: Directory for `ollama.log` (default: ".").
-    - `debug`: Enable Ollama debug logging (default: "0").
-    - `hf_model_name`: HF model repository name.
-    - `hf_model_quantization`: HF model quantization string.
-    - `num_parallel`: Max parallel requests for the server.
-    - `max_loaded_models`: Max models loaded in memory.
-    - `kv_cache_type`: Type of KV cache to use.
-    - `max_queue`: Max request queue size.
-    - `chunk_size`: Size of text chunks (default: 4000).
-    - `models_dir`: Directory for Ollama models (`OLLAMA_MODELS`).
-    - `hf_home`: Directory for Hugging Face cache (`HF_HOME`).
-    - Falls back to environment variables and then defaults for any missing arguments.
+*   `__init__(self, settings: Optional[OllamaSettings] = None, **kwargs) -> None`:
+    Initializes the Ollama client and worker configuration.
+    - If `settings` is provided, it uses the `OllamaSettings` object.
+    - Otherwise, it creates an `OllamaSettings` object from the provided `kwargs` (which automatically loads from environment variables for any missing keys).
+    - Stores the configuration in `self.settings`.
+    - Initializes the `ollama.Client` with `host` from settings.
 
 *   `start_server(self) -> None`:
     Starts the Ollama server (`ollama serve`) in the background. Injects instance configuration variables (prefixed with `OLLAMA_`) into the subprocess environment. Redirects output to `ollama.log` in the configured `log_dir`. Logs environment information (via `_log_env_info`) before starting. Waits for the server to be ready.

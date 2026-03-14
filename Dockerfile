@@ -69,13 +69,12 @@ RUN mkdir -p ${XDG_CACHE_HOME} \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-COPY *.py block_correction_prompts.json entrypoint/ ./
+COPY *.py block_correction_prompts.json ./
 
 # 7. Create Non-Root User (UID 1000) with the name appuser
 # Ensure appuser owns the app and cache
 RUN	groupadd -r appgroup && useradd -r -g appgroup -u 1000 -m -d /home/appuser appuser && \
-    chown -R appuser:appgroup /app /home/appuser && \
-    chmod +x entrypoint.sh
+    chown -R appuser:appgroup /app /home/appuser
 
 # 8. START COMMAND
-CMD [ "./entrypoint.sh" ]
+CMD [ "python3", "-u", "handler.py" ]

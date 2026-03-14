@@ -16,6 +16,20 @@ def log_vram_usage(label: str = "") -> None:
 *   **Args**: `label` (str) - An optional label for the log entry.
 *   **Behavior**: Logs information about VRAM to the configured logger. If `nvidia-smi` is not available, it logs a warning.
 
+#### `setup_config() -> GlobalConfig`
+Validates and configures environment variables using `GlobalConfig`.
+
+```python
+def setup_config() -> GlobalConfig:
+```
+*   **Behavior**:
+    1.  Attempts to instantiate `GlobalConfig`, which performs validation of `VOLUME_ROOT_MOUNT_PATH` and other env variables.
+    2.  Ensures required directories exist (`ollama_models`, `ollama_logs`, `hf_home`).
+    3.  Sets environment variables that libraries (Ollama, Hugging Face) expect.
+    4.  If running as root, updates ownership of these directories to `appuser:appgroup` (with chmod 777 fallback).
+    5.  Validates that `OLLAMA_MODEL` or HF name/quantization are set if post-processing is enabled.
+    6.  Returns the `GlobalConfig` object.
+
 #### `check_is_dir(path: str) -> None`
 Checks if the given path is a directory.
 

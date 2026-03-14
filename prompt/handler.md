@@ -51,31 +51,26 @@ Processes a single file using a freshly initialized `marker` converter (for thre
 
 #### `handler(job: Dict[str, Any]) -> Dict[str, str]`
 Main RunPod entry point.
-1.  **Setup**: Initializes `TextProcessor`, logs initial VRAM state, loads marker models, and loads prompt catalog.
-2.  **Ollama Initialization**: Starts Ollama server to verify or build the model, then stops it and clears CUDA cache.
-3.  **Configuration**: Resolves paths and environment variables (`VOLUME_ROOT_MOUNT_PATH`, `USE_POSTPROCESS_LLM`, etc.).
-4.  **Input Parsing**:
-    *   Reads job inputs (`input_dir`, `output_dir`, `output_format`, `marker_workers`, `ollama_chunk_workers` override, `ollama_block_correction_prompt`, `block_correction_prompt_key`, `delete_input_on_success`).
-    *   **Ollama Configuration Extraction**: Extracts all `ollama_*` prefixed keys from the job input and maps them to `OllamaWorker` constructor arguments (e.g., `ollama_host` -> `host`, `ollama_model` -> `model`).
-5.  **Prompt Resolution**: Uses custom prompt or looks up by key in the catalog.
-6.  **Path Resolution**: Constructs absolute paths using `VOLUME_ROOT_MOUNT_PATH` if relative.
-7.  **Validation**: Validates directories and cleanup settings.
-8.  **Marker Conversion**:
-    *   Prepares `marker_config` with formatting and behavior settings.
+1.  **Configuration and Environment Setup**: Calls `setup_config()` once to perform environment validation and directory configuration using `GlobalConfig`.
+2.  **Setup**: Logs initial VRAM state, loads marker models, and loads prompt catalog.
+3.  **Input Parsing**:
+    *   Reads job inputs (`input_dir`, `output_dir`, `output_format`, etc.).
+    *   **Settings Extraction**: Uses `extract_ollama_settings_from_job_input` and `extract_marker_settings_from_job_input` to create structured `OllamaSettings` and `MarkerSettings` objects.
+4.  **Ollama Initialization**: If enabled, starts Ollama server to verify or build the model using `ollama_settings`, then stops it and clears CUDA cache.
+5.  **Marker Conversion**:
+    *   Constructs absolute paths for input and output directories based on `GlobalConfig.volume_root_mount_path`.
+    *   Prepares `marker_config` using `MarkerSettings`.
     *   Finds valid files in the input directory.
     *   Uses `ThreadPoolExecutor` and `as_completed` to process files in parallel, passing configuration to each task.
-    *   Tracks `successful_inputs` and `processed_files`.
-    *   Clears CUDA cache and logs VRAM state after conversion.
-9.  **LLM Post-processing**:
+6.  **LLM Post-processing**:
     *   If enabled and `processed_files` is not empty:
         *   Moves Marker models to CPU to free VRAM.
-        *   Sets `OLLAMA_NUM_PARALLEL` in environment based on calculated value.
-        *   Starts Ollama server and ensures model exists.
+        *   Starts Ollama server using `ollama_settings`.
         *   Iterates through `processed_files` sequentially.
         *   Calls `ollama_worker.process_file` with chunk parallelism.
         *   Stops Ollama server and clears CUDA cache after processing.
-10. **Cleanup**: Deletes ONLY the original input files for which processing was successful, if `delete_input_on_success` is enabled.
-11. **Return**: Returns a completion status message.
+7.  **Cleanup**: Deletes ONLY the original input files for which processing was successful, if `delete_input_on_success` is enabled.
+8.  **Return**: Returns a completion status message.
 
 ## Logic
 *   **Worker Auto-scaling**: Dynamically balances marker parallelism vs Ollama chunk parallelism to avoid OOM while maximizing GPU utilization.

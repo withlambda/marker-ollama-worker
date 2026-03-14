@@ -387,9 +387,10 @@ Output Formatting: Provide ONLY the corrected text in clean Markdown.
 | `OLLAMA_VRAM_FACTOR`                     | VRAM (GB) per token for context calculation.          | `0.00013`                                        |
 | `OLLAMA_IMAGE_DESCRIPTION_PROMPT`        | Default prompt template for extracted image descriptions. | (Optional)                                   |
 | `HF_HOME`                                | Path to Hugging Face cache.                           | `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache`    |
-| `OLLAMA_MODELS_DIR`                      | Directory for Ollama models (relative to root mount). | `/.ollama/models`                                |
-| `OLLAMA_LOGS_DIR`                        | Directory for Ollama logs (relative to root mount).   | `/.ollama/logs`                                  |
-| `OLLAMA_LOGS`                            | Absolute path to Ollama logs directory.               | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/logs`        |
+| `OLLAMA_MODELS_DIR`                      | Relative directory for Ollama models within volume.   | `/.ollama/models`                                |
+| `OLLAMA_LOGS_DIR`                        | Relative directory for Ollama logs within volume.     | `/.ollama/logs`                                  |
+| `OLLAMA_MODELS`                          | Absolute path to Ollama models directory.             | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/models`       |
+| `OLLAMA_LOGS`                            | Absolute path to Ollama logs directory.               | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/logs`         |
 | `MARKER_DEBUG`                           | Enable debug mode.                                    | `False`                                          |
 
 ### Performance Tuning Variables

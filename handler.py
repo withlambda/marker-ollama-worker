@@ -48,13 +48,14 @@ from marker.models import create_model_dict
 from marker.config.parser import ConfigParser
 from marker.output import text_from_rendered
 from ollama_worker import OllamaWorker
+from settings import GlobalConfig, MarkerSettings, OllamaSettings
 from utils import (
     check_is_dir,
     check_is_not_file,
     check_no_subdirs,
     is_empty_dir,
     check_is_empty_dir,
-    TextProcessor,
+    setup_config,
     log_vram_usage
 )
 
@@ -83,6 +84,9 @@ OLLAMA_VRAM_PER_TOKEN_FACTOR: float = 0.00013
 OLLAMA_CONTEXT_LENGTH: int = int(os.environ.get("OLLAMA_CONTEXT_LENGTH", "4096"))
 # Block correction prompt library (loaded from JSON)
 BLOCK_CORRECTION_PROMPT_LIBRARY: Dict[str, str] = {}
+
+# Global application configuration (loaded once)
+_APP_CONFIG: Optional[GlobalConfig] = None
 
 # Process-local marker models (each worker process has its own copy)
 _MARKER_MODELS: Optional[Dict[str, Any]] = None
@@ -357,7 +361,7 @@ def _save_marker_output(
 def marker_process_single_file(
     file_path: Path,
     marker_config: Dict[str, Any],
-    output_base_path: str,
+    output_base_path: Path,
     output_format: str
 ) -> Tuple[bool, Path]:
     """
@@ -367,7 +371,7 @@ def marker_process_single_file(
     Args:
         file_path (Path): Path to the input file (e.g., .pdf, .docx).
         marker_config (Dict[str, Any]): Configuration for the marker converter.
-        output_base_path (str): The root directory where output for this file will be saved.
+        output_base_path (Path): The root directory where output for this file will be saved.
         output_format (str): The desired output format (e.g., 'markdown', 'json').
 
     Returns:
@@ -412,115 +416,65 @@ def marker_process_single_file(
         # Raise to propagate the failure
         raise e
 
-def extract_ollama_config_from_job_input(job_input: Dict[str, Any]) -> Dict[str, Any]:
+def extract_ollama_settings_from_job_input(job_input: Dict[str, Any]) -> OllamaSettings:
     """
-    Extracts the OllamaWorker-specific configuration from the given job input.
-
-    This function filters through a predefined list of configuration parameters
-    and extracts their corresponding values from the `job_input` dictionary. The
-    returned dictionary contains parameters relevant only to the configuration of
-    OllamaWorker.
-
-    :param job_input: The input dictionary contains various job parameters.
-        Expected to include keys with the prefix `ollama_` corresponding to
-        OllamaWorker-specific configuration parameters.
-    :type job_input: Dict[str, Any]
-    :return: A dictionary containing the extracted OllamaWorker-specific
-        configuration parameters.
-    :rtype: Dict[str, Any]
+    Extracts and validates OllamaSettings from job input.
     """
-    ollama_config_args = {}
-    # List of known configuration arguments for OllamaWorker
-    ollama_worker_params = [
-        "host", "model", "max_retries", "retry_delay", "context_length",
-        "flash_attention", "keep_alive", "log_dir", "debug",
-        "hf_model_name", "hf_model_quantization", "num_parallel",
-        "max_loaded_models", "kv_cache_type", "max_queue",
-        "chunk_size", "models_dir", "hf_home"
-    ]
-    for param in ollama_worker_params:
-        input_key = f"ollama_{param}"
-        if input_key in job_input:
-            ollama_config_args[param] = job_input[input_key]
+    ollama_input = {
+        k[len("ollama_"):]: v
+        for k, v in job_input.items()
+        if k.startswith("ollama_")
+    }
+    return OllamaSettings(**ollama_input)
 
-    return ollama_config_args
-
+def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerSettings:
+    """
+    Extracts and validates MarkerSettings from job input.
+    """
+    marker_input = {
+        k[len("marker_"):]: v
+        for k, v in job_input.items()
+        if k.startswith("marker_")
+    }
+    # Add shared parameters
+    marker_input["output_format"] = job_input.get("output_format", "markdown")
+    return MarkerSettings(**marker_input)
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """
     RunPod Serverless Handler.
     Processes input documents using 'marker-pdf', optionally using an Ollama LLM model.
-
-    Args:
-        job (Dict[str, Any]): The job request from RunPod. Expected keys:
-            - input (Dict[str, Any]):
-                - input_dir (str): Path to the input directory. Must contain one or more files in supported formats.
-                - output_dir (str): Path to the output directory.
-                - output_format (str, optional): One of 'json', 'markdown', 'html', 'chunks'. Default: 'markdown'.
-                - marker_workers (int, optional): Number of marker workers to use (file-level parallelism).
-                - delete_input_on_success (bool, optional): Whether to delete input files after successful processing. Default: False.
-                - ollama_block_correction_prompt (str, optional): Custom prompt for LLM post-processing.
-                - block_correction_prompt_key (str, optional): Key for predefined prompt in catalog.
-                - ollama_chunk_workers (int, optional): Number of parallel workers for chunk processing.
-                - ollama_image_description_prompt (str, optional): Custom prompt for image description generation.
-                - marker_paginate_output (bool, optional): Default: False.
-                - marker_force_ocr (bool, optional): Default: False.
-                - marker_disable_multiprocessing (bool, optional): Default: False.
-                - marker_disable_image_extraction (bool, optional): Default: False.
-                - marker_page_range (str, optional): e.g. "0-10".
-                - marker_processors (str, optional): Comma-separated list of processor classes.
-                - ollama_host (str, optional): Ollama server host.
-                - ollama_model (str, optional): Ollama model name to use.
-                - ollama_max_retries (int, optional): Maximum retry attempts for Ollama requests.
-                - ollama_retry_delay (int, optional): Delay between retries in seconds.
-                - ollama_context_length (int, optional): Context length for Ollama model.
-                - ollama_flash_attention (bool, optional): Enable flash attention.
-                - ollama_keep_alive (str, optional): Keep-alive duration for Ollama model.
-                - ollama_log_dir (str, optional): Directory for Ollama logs.
-                - ollama_debug (bool, optional): Enable debug mode for Ollama.
-                - ollama_hf_model_name (str, optional): Hugging Face model name.
-                - ollama_hf_model_quantization (str, optional): Quantization level for HF model.
-                - ollama_num_parallel (int, optional): Number of parallel Ollama inference slots.
-                - ollama_max_loaded_models (int, optional): Maximum number of loaded models.
-                - ollama_kv_cache_type (str, optional): KV cache type.
-                - ollama_max_queue (int, optional): Maximum queue size.
-                - ollama_chunk_size (int, optional): Chunk size for text processing.
-                - ollama_models_dir (str, optional): Directory for Ollama models.
-                - ollama_hf_home (str, optional): Hugging Face home directory.
-
-    Returns:
-        Dict[str, Any]: A dictionary containing the status and results of the job.
     """
+    global _APP_CONFIG
 
-    # --- Configuration ---
-    text_processor = TextProcessor()
+    # --- Configuration and Environment Setup ---
+    if not _APP_CONFIG:
+        _APP_CONFIG = setup_config()
+
     log_vram_usage("Start")
 
     # Load job input
     job_input = job.get("input", {})
 
-    ollama_config_args = extract_ollama_config_from_job_input(job_input)
+    # Extract structured settings
+    ollama_settings = extract_ollama_settings_from_job_input(job_input)
+    marker_settings = extract_marker_settings_from_job_input(job_input)
 
     # --- 1. Ollama Model Setup (Pre-processing) ---
-    use_postprocess_llm = text_processor.to_bool(os.environ.get('USE_POSTPROCESS_LLM'))
-
-    if use_postprocess_llm:
-        ollama_worker = OllamaWorker(**ollama_config_args)
+    if _APP_CONFIG.use_postprocess_llm:
+        ollama_worker = OllamaWorker(settings=ollama_settings)
         ollama_worker.initialize_model()
         torch.cuda.empty_cache()
         log_vram_usage("After initialize_model")
 
-    # Read environment variables
-    storage_bucket_path = os.environ.get('VOLUME_ROOT_MOUNT_PATH')
-    if not storage_bucket_path:
-        raise ValueError("Environment variable VOLUME_ROOT_MOUNT_PATH is not set")
+    # Read base paths from global config
+    storage_bucket_path = _APP_CONFIG.volume_root_mount_path
+    cleanup_output_dir = _APP_CONFIG.cleanup_output_dir_before_start
 
-    cleanup_output_dir = text_processor.to_bool(os.environ.get('CLEANUP_OUTPUT_DIR_BEFORE_START'))
-
-    # Get configuration from job input
+    # Get job-specific configuration
     input_dir = job_input.get('input_dir')
     output_dir = job_input.get('output_dir')
-    output_format = job_input.get('output_format', "markdown")
+    output_format = marker_settings.output_format
 
     if output_format not in VALID_OUTPUT_FORMATS:
         raise ValueError(f"output_format must be one of {VALID_OUTPUT_FORMATS}")
@@ -528,15 +482,11 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     if not input_dir or not output_dir:
         raise ValueError("input_dir and output_dir are required in job input")
 
-    marker_workers = job_input.get('marker_workers')
-    if marker_workers is not None:
-        marker_workers = int(marker_workers)
-
-    delete_input_on_success = text_processor.to_bool(job_input.get('delete_input_on_success', False))
+    delete_input_on_success = bool(job_input.get('delete_input_on_success', False))
 
     # Resolve block correction prompt (priority: direct prompt > prompt key > empty)
     ollama_block_correction_prompt = job_input.get("ollama_block_correction_prompt")
-    if not ollama_block_correction_prompt or ollama_block_correction_prompt is None:
+    if not ollama_block_correction_prompt:
         # Try to look up by key if direct prompt not provided
         block_correction_prompt_key = job_input.get("block_correction_prompt_key")
         if block_correction_prompt_key:
@@ -550,14 +500,14 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
     # Construct absolute paths
     if os.path.isabs(input_dir):
-        input_path = input_dir
+        input_path = Path(input_dir)
     else:
-        input_path = os.path.join(storage_bucket_path, input_dir)
+        input_path = storage_bucket_path / input_dir
 
     if os.path.isabs(output_dir):
-        output_path = output_dir
+        output_path = Path(output_dir)
     else:
-        output_path = os.path.join(storage_bucket_path, output_dir)
+        output_path = storage_bucket_path / output_dir
 
     # Validate paths
     check_is_dir(input_path)
@@ -577,15 +527,15 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- Configure Marker (Without internal LLM) ---
     marker_config = {
-        "output_format": output_format,
+        "output_format": marker_settings.output_format,
         "output_dir": output_path,
-        "debug": text_processor.to_bool(os.environ.get('MARKER_DEBUG', "false")),
-        "paginate_output": text_processor.to_bool(job_input.get('marker_paginate_output', "false")),
-        "force_ocr": text_processor.to_bool(job_input.get('marker_force_ocr', "false")),
-        "disable_multiprocessing": text_processor.to_bool(job_input.get('marker_disable_multiprocessing', "false")),
-        "disable_image_extraction": text_processor.to_bool(job_input.get('marker_disable_image_extraction', "false")),
-        "page_range": job_input.get('marker_page_range'),
-        "processors": job_input.get('marker_processors'),
+        "debug": bool(os.environ.get('MARKER_DEBUG', "false").lower() == "true"),
+        "paginate_output": marker_settings.paginate_output,
+        "force_ocr": marker_settings.force_ocr,
+        "disable_multiprocessing": marker_settings.disable_multiprocessing,
+        "disable_image_extraction": marker_settings.disable_image_extraction,
+        "page_range": marker_settings.page_range,
+        "processors": marker_settings.processors,
         "use_llm": False # Explicitly disable Marker's internal LLM logic
     }
 
@@ -609,8 +559,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     # --- Calculate optimal worker counts ---
     optimal_marker_workers, ollama_chunk_workers, ollama_num_parallel = calculate_optimal_workers(
         num_files=len(files_to_process),
-        use_postprocess_llm=use_postprocess_llm,
-        marker_workers_override=marker_workers
+        use_postprocess_llm=_APP_CONFIG.use_postprocess_llm,
+        marker_workers_override=marker_settings.workers
     )
 
     # Get job-level override for ollama chunk workers
@@ -618,11 +568,6 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     if ollama_chunk_workers_override is not None:
         ollama_chunk_workers = int(ollama_chunk_workers_override)
         logger.info(f"Using job-level override for ollama_chunk_workers (threads): {ollama_chunk_workers}")
-
-    ollama_image_description_prompt = (
-        job_input.get('ollama_image_description_prompt')
-        or os.environ.get("OLLAMA_IMAGE_DESCRIPTION_PROMPT")
-    )
 
     # --- Execute Marker Processing ---
     logger.info(f"Starting conversion for {len(files_to_process)} files...")
@@ -672,23 +617,23 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("Marker Processing completed")
 
     # --- 3. Ollama LLM Post-processing (Parallel) ---
-    if use_postprocess_llm and processed_files:
+    if _APP_CONFIG.use_postprocess_llm and processed_files:
         # Note: Marker worker processes have terminated, releasing their VRAM
         # Ollama now has full access to VRAM
         log_vram_usage("Before starting Ollama server")
 
         logger.info("--- Starting Ollama for Post-processing ---")
 
-        # Set Ollama parallelism based on calculated values
-        if "OLLAMA_NUM_PARALLEL" not in os.environ:
-            os.environ["OLLAMA_NUM_PARALLEL"] = str(ollama_num_parallel)
-            logger.info(f"Setting OLLAMA_NUM_PARALLEL={ollama_num_parallel} based on VRAM/Context calculation")
+        # Set Ollama parallelism based on calculated values if not explicitly overridden
+        if ollama_settings.num_parallel is None:
+            ollama_settings.num_parallel = ollama_num_parallel
+            logger.info(f"Setting Ollama num_parallel={ollama_num_parallel} based on VRAM/Context calculation")
 
         ollama_worker = None
         try:
             # Restart Ollama server
             # We recreate the worker instance with the same configuration
-            ollama_worker = OllamaWorker(**ollama_config_args)
+            ollama_worker = OllamaWorker(settings=ollama_settings)
             ollama_worker.start_server()
 
             # Note: Model should already be there from step 1, but ensure_model calls check_exists first
@@ -711,7 +656,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
                 image_descriptions = ollama_worker.describe_images(
                     image_paths=extracted_images,
-                    prompt_template=ollama_image_description_prompt,
+                    prompt_template=ollama_settings.image_description_prompt,
                     max_image_workers=ollama_chunk_workers
                 )
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, TextIO, Tuple
 import ollama
+from settings import OllamaSettings
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -26,55 +27,47 @@ class OllamaWorker:
     """
     def __init__(
         self,
-        host: Optional[str] = None,
-        model: Optional[str] = None,
-        max_retries: Optional[int] = None,
-        retry_delay: Optional[float] = None,
-        context_length: Optional[int] = None,
-        flash_attention: Optional[str] = None,
-        keep_alive: Optional[str] = None,
-        log_dir: Optional[str] = None,
-        debug: Optional[str] = None,
-        hf_model_name: Optional[str] = None,
-        hf_model_quantization: Optional[str] = None,
-        num_parallel: Optional[int] = None,
-        max_loaded_models: Optional[int] = None,
-        kv_cache_type: Optional[str] = None,
-        max_queue: Optional[int] = None,
-        chunk_size: Optional[int] = None,
-        models_dir: Optional[str] = None,
-        hf_home: Optional[str] = None
+        settings: Optional[OllamaSettings] = None,
+        **kwargs
     ) -> None:
         """
-        Initializes the OllamaWorker with configuration from arguments,
-        environment variables, or defaults.
+        Initializes the OllamaWorker with configuration from an OllamaSettings object
+        or from keyword arguments (which override environment variables).
         """
+        if settings is None:
+            # Filter kwargs to only include valid fields for OllamaSettings
+            # although extra='ignore' is set, it's safer to be explicit or just pass them.
+            settings = OllamaSettings(**kwargs)
+
+        self.settings = settings
+
         # Host and Client
-        self.host: str = host or os.environ.get("OLLAMA_BASE_URL") or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
+        self.host: str = settings.host
         self.client: ollama.Client = ollama.Client(host=self.host)
 
         # Model configuration
-        self.model: Optional[str] = model or os.environ.get("OLLAMA_MODEL")
-        self.hf_model_name: Optional[str] = hf_model_name or os.environ.get("OLLAMA_HUGGING_FACE_MODEL_NAME")
-        self.hf_model_quantization: Optional[str] = hf_model_quantization or os.environ.get("OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION")
-        self.hf_home: Optional[str] = hf_home or os.environ.get("HF_HOME")
-        self.models_dir: Optional[str] = models_dir or os.environ.get("OLLAMA_MODELS")
+        self.model: Optional[str] = settings.model
+        self.hf_model_name: Optional[str] = settings.hf_model_name
+        self.hf_model_quantization: Optional[str] = settings.hf_model_quantization
+        self.hf_home: Optional[str] = settings.hf_home
+        self.models_dir: Optional[str] = settings.models_dir
 
         # Runtime configuration
-        self.max_retries: int = int(max_retries if max_retries is not None else os.environ.get("OLLAMA_MAX_RETRIES", "3"))
-        self.retry_delay: float = float(retry_delay if retry_delay is not None else os.environ.get("OLLAMA_RETRY_DELAY", "2.0"))
-        self.context_length: int = int(context_length if context_length is not None else os.environ.get("OLLAMA_CONTEXT_LENGTH", "4096"))
-        self.chunk_size: int = int(chunk_size if chunk_size is not None else os.environ.get("OLLAMA_CHUNK_SIZE", "4000"))
+        self.max_retries: int = settings.max_retries
+        self.retry_delay: float = settings.retry_delay
+        self.context_length: int = settings.context_length
+        self.chunk_size: int = settings.chunk_size
+        self.image_description_prompt: Optional[str] = settings.image_description_prompt
 
         # Server configuration (used when starting the server)
-        self.flash_attention: str = flash_attention or os.environ.get("OLLAMA_FLASH_ATTENTION", "1")
-        self.keep_alive: str = keep_alive or os.environ.get("OLLAMA_KEEP_ALIVE", "-1")
-        self.log_dir: str = log_dir or os.environ.get("OLLAMA_LOGS", ".")
-        self.debug: str = debug or os.environ.get("OLLAMA_DEBUG", "0")
-        self.num_parallel: Optional[str] = str(num_parallel) if num_parallel is not None else os.environ.get("OLLAMA_NUM_PARALLEL")
-        self.max_loaded_models: Optional[str] = str(max_loaded_models) if max_loaded_models is not None else os.environ.get("OLLAMA_MAX_LOADED_MODELS")
-        self.kv_cache_type: Optional[str] = kv_cache_type or os.environ.get("OLLAMA_KV_CACHE_TYPE")
-        self.max_queue: Optional[str] = str(max_queue) if max_queue is not None else os.environ.get("OLLAMA_MAX_QUEUE")
+        self.flash_attention: str = settings.flash_attention
+        self.keep_alive: str = settings.keep_alive
+        self.log_dir: str = settings.log_dir or "."
+        self.debug: str = settings.debug
+        self.num_parallel: Optional[str] = str(settings.num_parallel) if settings.num_parallel is not None else None
+        self.max_loaded_models: Optional[str] = str(settings.max_loaded_models) if settings.max_loaded_models is not None else None
+        self.kv_cache_type: Optional[str] = settings.kv_cache_type
+        self.max_queue: Optional[str] = str(settings.max_queue) if settings.max_queue is not None else None
 
         self.log_file: Optional[TextIO] = None
         self.process: Optional[subprocess.Popen] = None
@@ -106,7 +99,7 @@ class OllamaWorker:
             # Log environment info for debugging
             self._log_env_info()
 
-            # Ensure OLLAMA_MODELS is set (usually handled by entrypoint scripts)
+            # Ensure OLLAMA_MODELS is set (handled by setup_config() in utils.py)
             if not self.models_dir:
                  logger.warning("OLLAMA_MODELS environment variable not set and models_dir not provided.")
 
