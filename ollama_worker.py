@@ -3,6 +3,7 @@ import subprocess
 import time
 import logging
 import signal
+import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, TextIO, Tuple
@@ -242,7 +243,9 @@ class OllamaWorker:
                     names.append(model.name)
 
             # Check for exact or tag match
-            return model_name in names or any(m.startswith(f"{model_name}:") for m in names)
+            model_name_lower = model_name.lower()
+            names_lower = [n.lower() for n in names]
+            return model_name_lower in names_lower or any(m.startswith(f"{model_name_lower}:") for m in names_lower)
         except Exception as e:
             logger.debug(f"Error checking model existence: {e}")
             return False
@@ -311,7 +314,8 @@ class OllamaWorker:
             raise FileNotFoundError(f"No GGUF file matching '{quantization}' found in {snapshot_path}")
 
         # Set OLLAMA_MODEL env var for the rest of the process
-        final_model_name = model_file.stem
+        # Ollama model names are typically lowercase.
+        final_model_name = model_file.stem.lower()
         os.environ["OLLAMA_MODEL"] = final_model_name
         logger.info(f"Resolved Ollama Model Name: {final_model_name}")
 
@@ -322,9 +326,16 @@ class OllamaWorker:
         logger.info(f"Building Ollama model '{final_model_name}'...")
 
         # Prepare Modelfile content
-        modelfile_content = f"FROM {model_file.absolute()}\n"
+        # Quoting paths in the Modelfile is recommended to avoid issues with special characters.
+        modelfile_content = f'FROM "{model_file.absolute()}"\n'
         if adapter_file:
-            modelfile_content += f"ADAPTER {adapter_file.absolute()}\n"
+            modelfile_content += f'ADAPTER "{adapter_file.absolute()}"\n'
+
+        # Use a temporary file for the Modelfile to ensure better compatibility with the Ollama CLI.
+        # Some versions of the CLI have issues with reading from stdin (-f -).
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.Modelfile', delete=False) as tmp:
+            tmp.write(modelfile_content)
+            tmp_path = tmp.name
 
         try:
             # Use subprocess to create the model, as some versions of the Python SDK
@@ -333,10 +344,9 @@ class OllamaWorker:
             env = os.environ.copy()
             env["OLLAMA_HOST"] = self.host
 
-            logger.info(f"Creating model '{final_model_name}' using Ollama CLI...")
+            logger.info(f"Creating model '{final_model_name}' using Ollama CLI and temporary Modelfile...")
             subprocess.run(
-                ["ollama", "create", final_model_name, "-f", "-"],
-                input=modelfile_content.encode(),
+                ["ollama", "create", final_model_name, "-f", tmp_path],
                 check=True,
                 env=env,
                 capture_output=True
@@ -347,6 +357,9 @@ class OllamaWorker:
             raise RuntimeError(f"Failed to create model '{final_model_name}' via CLI: {error_detail}")
         except Exception as e:
             raise RuntimeError(f"Failed to create model '{final_model_name}': {e}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     def _process_single_chunk(
         self,
