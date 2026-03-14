@@ -32,5 +32,8 @@
 **/*.log
 **/*.tmp
 
+### Python ###
 # python cache
 __pycache__/
+# python compiler out
+out/
