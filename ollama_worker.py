@@ -191,7 +191,10 @@ class OllamaWorker:
         Raises:
             RuntimeError: If pulling or creating the model fails.
         """
-        model_name = os.environ.get("OLLAMA_MODEL")
+        model_name = os.environ.get("OLLAMA_MODEL") or self._get_ollama_model_name_from_hf_specification(
+            hf_model_name=os.environ.get("OLLAMA_HUGGING_FACE_MODEL_NAME"),
+            hf_model_quantization=os.environ.get("OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION")
+        )
 
         if model_name:
             # Case 1: Model Name specified - Check/Pull
@@ -208,6 +211,34 @@ class OllamaWorker:
         else:
             # Case 2: No OLLAMA_MODEL - Build from HF
             self._build_from_hf()
+
+        if not os.environ.get("OLLAMA_MODEL"):
+            os.environ["OLLAMA_MODEL"] = model_name
+
+    @staticmethod
+    def _get_ollama_model_name_from_hf_specification(
+        hf_model_name: str,
+        hf_model_quantization: str
+    ) -> str:
+        """
+        Convert the Hugging Face model specification into an Ollama model name.
+
+        The method takes a Hugging Face model name and quantization specification,
+        then converts this information into the specific format required for Ollama
+        model names. If the model name contains a path element (e.g., "namespace/model"),
+        only the portion after the "/" is used as the base name. The quantization
+        specification is then appended to this base name, separated by a hyphen.
+
+        :param hf_model_name: The name of the Hugging Face model. It can include a namespace or subpath
+                              separated by a forward slash.
+        :param hf_model_quantization: The quantization level of the Hugging Face model, which must be
+                                       compatible with the Ollama format.
+        :return: A string representing the transformed Ollama model name formatted as
+                 "<base_name>-<quantization>".
+        """
+        ollama_base_name = hf_model_name if '/' not in hf_model_name else hf_model_name.split('/',1)[1]
+
+        return (ollama_base_name + "-" + hf_model_quantization).lower()
 
     def _check_model_exists(
         self,
