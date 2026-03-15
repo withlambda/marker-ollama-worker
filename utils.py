@@ -26,7 +26,20 @@ logger = logging.getLogger(__name__)
 def setup_config() -> GlobalConfig:
     """
     Validates and configures environment variables, and ensures required directories exist.
-    Uses GlobalConfig for validation.
+
+    This function:
+    1. Instantiates GlobalConfig, which performs Pydantic validation of environment variables.
+    2. Ensures that directories for Ollama models, logs, and Hugging Face cache exist.
+    3. Sets environment variables for downstream libraries (Ollama, HF).
+    4. Handles ownership and permission updates if running as root.
+    5. Validates additional model-related configuration for post-processing.
+
+    Returns:
+        GlobalConfig: The validated global configuration object.
+
+    Raises:
+        ValidationError: If environment variables fail Pydantic validation.
+        ValueError: If mandatory model configurations are missing when LLM is enabled.
     """
     try:
         config = GlobalConfig()
@@ -52,17 +65,29 @@ def setup_config() -> GlobalConfig:
 
     # OLLAMA_MODEL validation for post-processing
     if config.use_postprocess_llm:
+        # Check if the model is provided in the environment. Note: job input overrides are handled in handler.py
         ollama_model = os.environ.get("OLLAMA_MODEL")
         if not ollama_model:
             hf_name = os.environ.get("OLLAMA_HUGGING_FACE_MODEL_NAME")
             hf_quant = os.environ.get("OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION")
             if not hf_name or not hf_quant:
-                 raise ValueError("OLLAMA_HUGGING_FACE_MODEL_NAME and OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION must be defined when OLLAMA_MODEL is not set and USE_POSTPROCESS_LLM is true")
+                 raise ValueError(
+                     "OLLAMA_HUGGING_FACE_MODEL_NAME and OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION "
+                     "must be defined when OLLAMA_MODEL is not set and USE_POSTPROCESS_LLM is true"
+                 )
 
     return config
 
 def _update_ownership(*paths: str) -> None:
-    """Updates ownership of the specified paths to appuser:appgroup if they exist."""
+    """
+    Updates ownership of the specified paths to appuser:appgroup if they exist.
+
+    This is used when running as root (e.g., in a container) to ensure the
+    non-root user can access mounted volumes.
+
+    Args:
+        *paths: Variable length list of directory/file paths to update.
+    """
     try:
         # Check if appuser exists
         subprocess.run(["id", "appuser"], capture_output=True, check=True)
@@ -85,7 +110,10 @@ def _update_ownership(*paths: str) -> None:
 def get_vram_info() -> Dict[str, Any]:
     """
     Attempts to get VRAM information using nvidia-smi.
-    Returns a dictionary with 'total', 'used', and 'free' in MB.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing 'total', 'used', and 'free' VRAM in MB.
+                        Returns an empty dictionary if nvidia-smi is not available.
     """
     try:
         res = subprocess.check_output(
@@ -99,7 +127,12 @@ def get_vram_info() -> Dict[str, Any]:
         return {}
 
 def log_vram_usage(label: str = "") -> None:
-    """Logs the current VRAM usage."""
+    """
+    Logs the current VRAM usage to the logger.
+
+    Args:
+        label (str): An optional label to include in the log message.
+    """
     info = get_vram_info()
     if info:
         logger.info(f"VRAM Usage {f'({label})' if label else ''}: "
@@ -108,23 +141,55 @@ def log_vram_usage(label: str = "") -> None:
         logger.info(f"VRAM Usage {f'({label})' if label else ''}: nvidia-smi not available.")
 
 def check_is_dir(path: Union[str, Path]) -> None:
-    """Checks if the given path is a directory. Raises NotADirectoryError if not."""
+    """
+    Checks if the given path is a directory.
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Raises:
+        NotADirectoryError: If the path does not exist or is not a directory.
+    """
     if not os.path.isdir(path):
         raise NotADirectoryError(f"Path '{path}' is not a directory.")
 
 def check_is_not_file(path: Union[str, Path]) -> None:
-    """Checks if the given path is not a file. Raises ValueError if it is a file."""
+    """
+    Checks if the given path is NOT a file.
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Raises:
+        ValueError: If the path is an existing file.
+    """
     if os.path.isfile(path):
         raise ValueError(f"Path '{path}' is a file.")
 
 def check_no_subdirs(path: Union[str, Path]) -> None:
-    """Checks if the given directory contains no subdirectories (excluding hidden ones)."""
+    """
+    Checks if the given directory contains no subdirectories (excluding hidden ones).
+
+    Args:
+        path (Union[str, Path]): Path to the directory to check.
+
+    Raises:
+        ValueError: If subdirectories are found.
+    """
     subdir_count = sum(1 for entry in os.scandir(path) if entry.is_dir() and not entry.name.startswith('.'))
     if subdir_count > 0:
         raise ValueError(f"Path '{path}' contains subdirectories.")
 
 def is_empty_dir(path: Union[str, Path]) -> bool:
-    """Checks if the given path is an empty directory (excluding hidden files)."""
+    """
+    Checks if the given path is an empty directory (excluding hidden files).
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Returns:
+        bool: True if empty, False otherwise.
+    """
     p = Path(path)
     if not p.is_dir():
         return False
@@ -134,7 +199,15 @@ def is_empty_dir(path: Union[str, Path]) -> bool:
     return True
 
 def check_is_empty_dir(path: Union[str, Path]) -> None:
-    """Checks if the given path is an empty directory if it exists."""
+    """
+    Checks if the given path is an empty directory if it exists.
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Raises:
+        ValueError: If the directory exists and is not empty.
+    """
     if os.path.exists(path) and not is_empty_dir(path):
         raise ValueError(f"Directory '{path}' is not empty.")
 

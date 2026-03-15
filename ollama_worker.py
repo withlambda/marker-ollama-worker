@@ -75,6 +75,13 @@ class OllamaWorker:
 
         logger.info(f"OllamaWorker initialized with host={self.host}, model={self.model}")
 
+    def __del__(self) -> None:
+        """
+        Ensures that the Ollama server is stopped and resources are released
+        when the worker object is destroyed.
+        """
+        self.stop_server()
+
 
     def start_server(self) -> None:
         """
@@ -193,36 +200,44 @@ class OllamaWorker:
         logger.info("------------------------")
 
     def stop_server(self) -> None:
-        """Stops the Ollama server and its process group."""
-        if self.process:
-            logger.info(f"Stopping Ollama service (PID: {self.process.pid})...")
-            try:
-                # Since we used start_new_session=True, we should kill the process group
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-
-                # Still call wait to cleanup the zombie process
-                self.process.wait(timeout=10)
-            except ProcessLookupError:
-                logger.debug("Ollama process already gone.")
-            except subprocess.TimeoutExpired:
-                logger.warning("Ollama process group did not terminate gracefully, killing...")
+        """
+        Stops the Ollama server and its process group.
+        Ensures resources (process, log file handle) are released.
+        """
+        with self._lock:
+            if self.process:
+                logger.info(f"Stopping Ollama service (PID: {self.process.pid})...")
                 try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                    self.process.wait()
+                    # Since we used start_new_session=True, we should kill the process group
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+
+                    # Still call wait to cleanup the zombie process
+                    self.process.wait(timeout=10)
+                except ProcessLookupError:
+                    logger.debug("Ollama process already gone.")
+                except subprocess.TimeoutExpired:
+                    logger.warning("Ollama process group did not terminate gracefully, killing...")
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                        self.process.wait()
+                    except Exception as e:
+                        logger.error(f"Failed to kill Ollama process group: {e}")
                 except Exception as e:
-                    logger.error(f"Failed to kill Ollama process group: {e}")
-            except Exception as e:
-                logger.error(f"Error while stopping Ollama: {e}")
-                # Fallback to simple terminate
-                self.process.terminate()
-                self.process.wait(timeout=5)
+                    logger.error(f"Error while stopping Ollama: {e}")
+                    # Fallback to simple terminate
+                    self.process.terminate()
+                    self.process.wait(timeout=5)
 
-            logger.info("Ollama service stopped.")
-            self.process = None
+                logger.info("Ollama service stopped.")
+                self.process = None
 
-        if self.log_file:
-            self.log_file.close()
-            self.log_file = None
+            if self.log_file:
+                try:
+                    self.log_file.close()
+                except Exception as e:
+                    logger.error(f"Error closing Ollama log file: {e}")
+                finally:
+                    self.log_file = None
 
     def _wait_for_ready(
         self,
@@ -435,11 +450,12 @@ class OllamaWorker:
 
         # Use a temporary file for the Modelfile to ensure better compatibility with the Ollama CLI.
         # Some versions of the CLI have issues with reading from stdin (-f -).
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.Modelfile', delete=False) as tmp:
-            tmp.write(modelfile_content)
-            tmp_path = tmp.name
-
+        tmp_path = None
         try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.Modelfile', delete=False) as tmp:
+                tmp.write(modelfile_content)
+                tmp_path = Path(tmp.name)
+
             # Use subprocess to create the model, as some versions of the Python SDK
             # have issues with the 'modelfile' keyword argument.
             # We ensure OLLAMA_HOST is set so it connects to the local server.
@@ -448,7 +464,7 @@ class OllamaWorker:
 
             logger.info(f"Creating model '{final_model_name}' using Ollama CLI and temporary Modelfile...")
             subprocess.run(
-                ["ollama", "create", final_model_name, "-f", tmp_path],
+                ["ollama", "create", final_model_name, "-f", str(tmp_path)],
                 check=True,
                 env=env,
                 capture_output=True
@@ -460,8 +476,8 @@ class OllamaWorker:
         except Exception as e:
             raise RuntimeError(f"Failed to create model '{final_model_name}': {e}")
         finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if tmp_path:
+                tmp_path.unlink(missing_ok=True)
 
     def _process_single_chunk(
         self,

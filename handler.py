@@ -43,6 +43,13 @@ os.environ["MKL_NUM_THREADS"] = "2"
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # Transformers uses .isin for a simple op, which is not supported on MPS
 os.environ["IN_STREAMLIT"] = "true"  # Avoid multiprocessing inside surya
 
+# Set multiprocessing start method early (required for CUDA)
+try:
+    mp.set_start_method("spawn", force=True)
+except RuntimeError:
+    # Already set, which is fine
+    pass
+
 from marker.converters.pdf import PdfConverter
 from marker.models import create_model_dict
 from marker.config.parser import ConfigParser
@@ -363,7 +370,7 @@ def marker_process_single_file(
     marker_config: Dict[str, Any],
     output_base_path: Path,
     output_format: str
-) -> Tuple[bool, Path]:
+) -> Tuple[bool, Optional[Path]]:
     """
     Processes a single file using the provided converter and saves the output.
     Uses process-local marker models loaded during worker initialization.
@@ -375,7 +382,7 @@ def marker_process_single_file(
         output_format (str): The desired output format (e.g., 'markdown', 'json').
 
     Returns:
-        Tuple[bool, Path]: A tuple containing (success_boolean, output_file_path).
+        Tuple[bool, Optional[Path]]: A tuple containing (success_boolean, output_file_path).
     """
     global _MARKER_MODELS
     try:
@@ -413,8 +420,8 @@ def marker_process_single_file(
         return True, output_file
     except Exception as e:
         logger.error(f"Error processing {file_path.name}: {e}")
-        # Raise to propagate the failure
-        raise e
+        # Return False and None to allow other files in the pool to continue
+        return False, None
 
 def extract_ollama_settings_from_job_input(job_input: Dict[str, Any]) -> OllamaSettings:
     """
@@ -572,15 +579,8 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     # --- Execute Marker Processing ---
     logger.info(f"Starting conversion for {len(files_to_process)} files...")
     start_time = time.time()
-    processed_files = [] # Tuples of (original_path, output_file_path)
+    processed_files = [] # Paths of successfully processed output files
     successful_inputs = [] # Original paths of successfully processed files
-
-    # Set multiprocessing start method (required for CUDA)
-    try:
-        mp.set_start_method("spawn")
-    except RuntimeError:
-        # Already set, which is fine (happens if handler is called multiple times)
-        pass
 
     try:
         # Prepare arguments for each file
@@ -600,7 +600,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
             # Separate successful results from failed ones
             for idx, (success, output_file_path) in enumerate(results):
-                if success:
+                if success and output_file_path:
                     processed_files.append(output_file_path)
                     successful_inputs.append(files_to_process[idx])
 
