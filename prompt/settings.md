@@ -19,35 +19,36 @@ Global application configuration loaded from environment variables.
 
 ### `MarkerSettings(BaseModel)`
 Configuration for the Marker PDF processing, typically extracted from job input.
-*   `workers` (Optional[int])
-*   `paginate_output` (bool)
-*   `force_ocr` (bool)
-*   `disable_multiprocessing` (bool)
-*   `disable_image_extraction` (bool)
-*   `page_range` (Optional[str])
-*   `processors` (Optional[str])
-*   `output_format` (str)
+*   `workers` (Optional[int]): `MARKER_WORKERS`
+*   `paginate_output` (bool): `MARKER_PAGINATE_OUTPUT`
+*   `force_ocr` (bool): `MARKER_FORCE_OCR`
+*   `disable_multiprocessing` (bool): `MARKER_DISABLE_MULTIPROCESSING`
+*   `disable_image_extraction` (bool): `MARKER_DISABLE_IMAGE_EXTRACTION`
+*   `page_range` (Optional[str]): `MARKER_PAGE_RANGE`
+*   `processors` (Optional[str]): `MARKER_PROCESSORS`
+*   `output_format` (str): `MARKER_OUTPUT_FORMAT`
 
 ### `OllamaSettings(BaseSettings)`
 Configuration for the Ollama worker, supporting environment variables (prefixed with `OLLAMA_`) and manual overrides.
-*   `host` (str): Ollama server host.
-*   `model` (Optional[str]): Ollama model name.
-*   `max_retries` (int)
-*   `retry_delay` (float)
-*   `context_length` (int)
-*   `flash_attention` (str)
-*   `keep_alive` (str)
-*   `log_dir` (Optional[str])
-*   `debug` (str)
-*   `hf_model_name` (Optional[str])
-*   `hf_model_quantization` (Optional[str])
-*   `num_parallel` (Optional[int])
-*   `max_loaded_models` (Optional[int])
-*   `kv_cache_type` (Optional[str])
-*   `max_queue` (int)
-*   `chunk_size` (int)
-*   `models_dir` (Optional[str])
-*   `hf_home` (Optional[str])
+*   `host` (str): `OLLAMA_HOST` (also `OLLAMA_BASE_URL`)
+*   `model` (Optional[str]): `OLLAMA_MODEL`
+*   `max_retries` (int): `OLLAMA_MAX_RETRIES`
+*   `retry_delay` (float): `OLLAMA_RETRY_DELAY`
+*   `context_length` (int): `OLLAMA_CONTEXT_LENGTH`
+*   `flash_attention` (str): `OLLAMA_FLASH_ATTENTION`
+*   `keep_alive` (str): `OLLAMA_KEEP_ALIVE`
+*   `log_dir` (Optional[str]): `OLLAMA_LOG_DIR` (also `OLLAMA_LOGS`)
+*   `debug` (str): `OLLAMA_DEBUG`
+*   `hf_model_name` (Optional[str]): `OLLAMA_HF_MODEL_NAME` (also `OLLAMA_HUGGING_FACE_MODEL_NAME`)
+*   `hf_model_quantization` (Optional[str]): `OLLAMA_HF_MODEL_QUANTIZATION` (also `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION`)
+*   `num_parallel` (Optional[int]): `OLLAMA_NUM_PARALLEL`
+*   `max_loaded_models` (Optional[int]): `OLLAMA_MAX_LOADED_MODELS`
+*   `kv_cache_type` (Optional[str]): `OLLAMA_KV_CACHE_TYPE`
+*   `max_queue` (Optional[int]): `OLLAMA_MAX_QUEUE`
+*   `chunk_size` (int): `OLLAMA_CHUNK_SIZE`
+*   `image_description_prompt` (Optional[str]): `OLLAMA_IMAGE_DESCRIPTION_PROMPT`
+*   `models_dir` (Optional[str]): `OLLAMA_MODELS_DIR` (also `OLLAMA_MODELS`)
+*   `hf_home` (Optional[str]): `OLLAMA_HF_HOME` (also `HF_HOME`)
 
 ## Logic
 *   Uses `pydantic-settings` to automatically load values from the environment.

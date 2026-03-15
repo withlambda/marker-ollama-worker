@@ -42,14 +42,14 @@ class MarkerSettings(BaseModel):
     """
     Configuration for the Marker PDF processing.
     """
-    workers: Optional[int] = None
-    paginate_output: bool = False
-    force_ocr: bool = False
-    disable_multiprocessing: bool = False
-    disable_image_extraction: bool = False
-    page_range: Optional[str] = None
-    processors: Optional[str] = None
-    output_format: str = "markdown"
+    workers: Optional[int] = Field(None, validation_alias="MARKER_WORKERS")
+    paginate_output: bool = Field(False, validation_alias="MARKER_PAGINATE_OUTPUT")
+    force_ocr: bool = Field(False, validation_alias="MARKER_FORCE_OCR")
+    disable_multiprocessing: bool = Field(False, validation_alias="MARKER_DISABLE_MULTIPROCESSING")
+    disable_image_extraction: bool = Field(False, validation_alias="MARKER_DISABLE_IMAGE_EXTRACTION")
+    page_range: Optional[str] = Field(None, validation_alias="MARKER_PAGE_RANGE")
+    processors: Optional[str] = Field(None, validation_alias="MARKER_PROCESSORS")
+    output_format: str = Field("markdown", validation_alias="MARKER_OUTPUT_FORMAT")
 
 class OllamaSettings(BaseSettings):
     """
@@ -61,23 +61,23 @@ class OllamaSettings(BaseSettings):
         "http://127.0.0.1:11434",
         validation_alias=AliasChoices("OLLAMA_HOST", "OLLAMA_BASE_URL")
     )
-    model: Optional[str] = Field(None)
-    max_retries: int = Field(3)
-    retry_delay: float = Field(2.0)
-    context_length: int = Field(4096)
-    flash_attention: str = Field("1")
-    keep_alive: str = Field("-1")
-    log_dir: Optional[str] = Field(None, validation_alias="OLLAMA_LOGS")
-    debug: str = Field("0")
-    hf_model_name: Optional[str] = Field(None, validation_alias="OLLAMA_HUGGING_FACE_MODEL_NAME")
-    hf_model_quantization: Optional[str] = Field(None, validation_alias="OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION")
-    num_parallel: Optional[int] = Field(None)
-    max_loaded_models: Optional[int] = Field(None)
-    kv_cache_type: Optional[str] = Field(None)
-    max_queue: Optional[int] = Field(None)
-    chunk_size: int = Field(4000)
+    model: Optional[str] = Field(None, validation_alias="OLLAMA_MODEL")
+    max_retries: int = Field(3, validation_alias="OLLAMA_MAX_RETRIES")
+    retry_delay: float = Field(2.0, validation_alias="OLLAMA_RETRY_DELAY")
+    context_length: int = Field(4096, validation_alias="OLLAMA_CONTEXT_LENGTH")
+    flash_attention: str = Field("1", validation_alias="OLLAMA_FLASH_ATTENTION")
+    keep_alive: str = Field("-1", validation_alias="OLLAMA_KEEP_ALIVE")
+    log_dir: Optional[str] = Field(None, validation_alias=AliasChoices("OLLAMA_LOG_DIR", "OLLAMA_LOGS"))
+    debug: str = Field("0", validation_alias="OLLAMA_DEBUG")
+    hf_model_name: Optional[str] = Field(None, validation_alias=AliasChoices("OLLAMA_HF_MODEL_NAME", "OLLAMA_HUGGING_FACE_MODEL_NAME"))
+    hf_model_quantization: Optional[str] = Field(None, validation_alias=AliasChoices("OLLAMA_HF_MODEL_QUANTIZATION", "OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION"))
+    num_parallel: Optional[int] = Field(None, validation_alias="OLLAMA_NUM_PARALLEL")
+    max_loaded_models: Optional[int] = Field(None, validation_alias="OLLAMA_MAX_LOADED_MODELS")
+    kv_cache_type: Optional[str] = Field(None, validation_alias="OLLAMA_KV_CACHE_TYPE")
+    max_queue: Optional[int] = Field(None, validation_alias="OLLAMA_MAX_QUEUE")
+    chunk_size: int = Field(4000, validation_alias="OLLAMA_CHUNK_SIZE")
     image_description_prompt: Optional[str] = Field(None, validation_alias="OLLAMA_IMAGE_DESCRIPTION_PROMPT")
-    models_dir: Optional[str] = Field(None, validation_alias="OLLAMA_MODELS")
+    models_dir: Optional[str] = Field(None, validation_alias=AliasChoices("OLLAMA_MODELS_DIR", "OLLAMA_MODELS"))
     hf_home: Optional[str] = Field(None, validation_alias="HF_HOME")
 
     @model_validator(mode='after')
@@ -86,12 +86,3 @@ class OllamaSettings(BaseSettings):
         # But this depends on whether use_postprocess_llm is true, which is in GlobalConfig
         # We'll do this validation in the handler or a combined validator if needed.
         return self
-
-# Initialize global config
-global_config = None
-try:
-    global_config = GlobalConfig()
-except Exception:
-    # This might fail during initialization if env vars are missing
-    # but we'll handle it in setup_config
-    pass
