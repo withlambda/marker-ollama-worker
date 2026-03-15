@@ -107,6 +107,17 @@ When the user issues the command `/update-readme`, the agent must:
     - How to test the code.
     - Any other important information for using the repository.
 
+### `/review-all`
+When the user issues the command `/review-all`, the agent must:
+1.  Execute a comprehensive project audit and synchronization cycle.
+2.  Determine the optimal execution order based on the current project state to ensure consistency (e.g., improving code before updating documentation).
+3.  Perform the actions defined in the following commands:
+    -   `/review-code`: To identify and fix bugs, security issues, and performance bottlenecks.
+    -   `/update-src-docs`: To synchronize existing inline documentation with the latest code logic.
+    -   `/add-src-docs`: To ensure all functions, classes, and modules have complete documentation.
+    -   `/update-readme`: To ensure the project's high-level documentation is accurate and up-to-date.
+4.  Verify that all changes are cohesive and that no documentation contradicts the updated source code.
+
 ## License
 
 [GNU General Public License v3.0](LICENSE)
