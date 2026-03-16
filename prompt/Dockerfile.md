@@ -8,13 +8,13 @@ This Dockerfile defines the environment for the `marker-ollama-worker`. It combi
 *   `PYTORCH_VERSION`: Default `2.8.0`. The PyTorch version.
 *   `CUDA_VERSION`: Default `12.8`. The CUDA version.
 *   `CUDNN_VERSION`: Default `9`. The cuDNN version.
-*   `OLLAMA_VERSION`: Default `0.17.4`. The Ollama version.
+*   `OLLAMA_SERVER_VERSION`: Default `0.18.0`. The Ollama version.
 *   `DOWNLOAD_MARKER_MODELS`: Default `"false"`. Boolean flag to download marker models during build.
 *   `BASE_IMAGE`: Default `pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime`.
 
 ## Stages
 
-1.  **Load Ollama Image**: Pulls the `ollama/ollama:${OLLAMA_VERSION}` image as `ollama-source` to copy the binary.
+1.  **Load Ollama Image**: Pulls the `ollama/ollama:${OLLAMA_SERVER_VERSION}` image as `ollama-source` to copy the binary.
 2.  **Base Image**: Uses `${BASE_IMAGE}` as the foundation.
 
 ## Environment Variables
