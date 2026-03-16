@@ -24,9 +24,22 @@ class GlobalConfig(BaseSettings):
         handler_file_name (str): The name of the handler file (default: handler.py).
         cleanup_output_dir_before_start (bool): If True, the output directory is cleared before processing.
         use_postprocess_llm (bool): Enable/Disable LLM-based post-processing.
-        hf_home (Path): The home directory for Hugging Face models.
-        ollama_models (Path): The directory for Ollama models (derived from volume root).
-        ollama_log_dir (Path): The directory for Ollama logs (derived from volume root).
+        hf_home (Path): The home directory for Hugging Face models (auto-computed from volume_root_mount_path).
+        ollama_models (Path): The directory for Ollama models (auto-computed from volume_root_mount_path).
+        ollama_log_dir (Path): The directory for Ollama logs (auto-computed from volume_root_mount_path).
+        vram_gb_total (int): Total VRAM available on GPU (used for auto-tuning worker counts).
+        vram_gb_reserve (int): VRAM to reserve for system/other processes.
+        vram_gb_per_token_factor (float): VRAM (GB) per token for context calculations.
+        image_description_section_heading (str): Heading for fallback image description section.
+        image_description_heading (str): Marker for beginning of image descriptions.
+        image_description_end (str): Marker for end of image descriptions.
+        block_correction_prompts_file_name (str): Filename for block correction prompts JSON.
+        block_correction_prompts_file_path (Path): Full path to prompts file (auto-computed).
+        block_correction_prompts_library (dict): Loaded prompt templates (auto-loaded from file).
+
+    Note:
+        Paths with auto-computed defaults use default_factory with validated data (Pydantic 2.10+).
+        If not explicitly provided via environment variables, they are computed from volume_root_mount_path.
     """
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
@@ -36,19 +49,19 @@ class GlobalConfig(BaseSettings):
     use_postprocess_llm: bool = Field(True, validation_alias="USE_POSTPROCESS_LLM", frozen=True)
 
     hf_home: Path = Field(
-        default_factory= lambda data: data["volume_root_mount_path"] / "huggingface-cache",
+        default_factory=lambda data: data["volume_root_mount_path"] / "huggingface-cache",
         validation_alias="HF_HOME",
         frozen=True
     )
 
     # Actual paths used by services (calculated)
     ollama_models: Path = Field(
-        default_factory= lambda data: (data["volume_root_mount_path"] / ".ollama/models").resolve(),
+        default_factory=lambda data: (data["volume_root_mount_path"] / ".ollama/models").resolve(),
         validation_alias="OLLAMA_MODELS",
         frozen=True
     )
     ollama_log_dir: Path = Field(
-        default_factory= lambda data: (data["volume_root_mount_path"] / ".ollama/logs").resolve(),
+        default_factory=lambda data: (data["volume_root_mount_path"] / ".ollama/logs").resolve(),
         validation_alias="OLLAMA_LOG_DIR",
         frozen=True
     )
@@ -84,20 +97,21 @@ class GlobalConfig(BaseSettings):
     )
 
     block_correction_prompts_file_path: Path = Field(
-        default_factory= lambda data: (Path(__file__).parent / data["block_correction_prompts_file_name"]).resolve(),
+        default_factory=lambda data: (Path(__file__).parent / data["block_correction_prompts_file_name"]).resolve(),
         validation_alias="BLOCK_CORRECTION_PROMPTS_FILE_PATH",
         frozen=True
     )
 
     block_correction_prompts_library: dict[str, str] = Field(
-        default_factory=lambda data: GlobalConfig._load_block_correction_prompts(data.block_correction_prompts_file_path, data.FILE_ENCODING),
+        default_factory=lambda data: GlobalConfig._load_block_correction_prompts(data["block_correction_prompts_file_path"], GlobalConfig.FILE_ENCODING),
         validation_alias="BLOCK_CORRECTION_PROMPTS_LIBRARY",
         frozen=True
     )
 
     @model_validator(mode='after')
     def init_environment_variables(self) -> 'GlobalConfig':
-        for  (prop, alias) in [
+        """Initialize environment variables from validated fields."""
+        for (prop, alias) in [
             (self.hf_home, "HF_HOME"),
             (self.ollama_models, "OLLAMA_MODELS"),
             (self.ollama_log_dir, "OLLAMA_LOG_DIR"),
@@ -159,6 +173,8 @@ class MarkerSettings(BaseSettings):
         output_format (str): The format of the output (markdown, json, etc.).
         vram_gb_per_worker (int): The amount of VRAM (in GB) to allocate per worker process.
         debug (bool): Enable debug mode for detailed logging.
+        maxtasksperchild (int): Number of tasks each worker handles before recycling.
+                                This prevents memory leaks and VRAM accumulation.
     """
     model_config = SettingsConfigDict(env_prefix='MARKER_', populate_by_name=True, extra='ignore')
 
@@ -172,6 +188,9 @@ class MarkerSettings(BaseSettings):
     output_format: str = Field("markdown", validation_alias="MARKER_OUTPUT_FORMAT")
     vram_gb_per_worker: int = Field(5, validation_alias="MARKER_VRAM_GB_PER_WORKER")
     debug: bool = Field(False, validation_alias="MARKER_DEBUG")
+    # Worker process recycling: Number of tasks each worker handles before being recycled
+    # This helps prevent memory leaks and VRAM accumulation over long-running workers
+    maxtasksperchild: int = Field(10, validation_alias="MARKER_MAXTASKSPERCHILD")
 
 
 

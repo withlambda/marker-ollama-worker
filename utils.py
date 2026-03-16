@@ -59,6 +59,8 @@ def setup_config() -> GlobalConfig:
         os.makedirs(config.ollama_log_dir, exist_ok=True)
         os.makedirs(config.hf_home, exist_ok=True)
         # Ownership/Permissions (if root)
+        # Note: This assumes Linux/Docker environment where UID 0 is root
+        # This is required to allow non-root user (appuser) to access mounted volumes
         if os.getuid() == 0:
                 _update_ownership(
                     str(config.ollama_models),

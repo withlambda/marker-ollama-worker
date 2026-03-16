@@ -105,7 +105,7 @@ def marker_worker_exit() -> None:
             torch.cuda.empty_cache()
             gc.collect()
     except Exception as e:
-        logger.debug(f"Error during worker cleanup: {e}")
+        logger.warning(f"Error during worker cleanup: {e}")
 
 def calculate_optimal_marker_workers(
     num_files: int,
@@ -234,9 +234,12 @@ def insert_image_descriptions_to_text_file(
         section_lines = ["", app_config.image_description_section_heading, ""]
         for image_path, description in unplaced_descriptions:
             section_lines.append(f"### Image: `{image_path.name}`")
-            section_lines.append(f"{app_config.image_description_end}")
-            section_lines.append(description)
-            section_lines.append(f"{app_config.image_description_end}")
+            section_lines.append("")
+            # Format as blockquote matching inline insertion format
+            indented_description = description.replace("\n", "\n> ")
+            section_lines.append(f"> {app_config.image_description_heading}")
+            section_lines.append(f"> {indented_description}")
+            section_lines.append(f"> {app_config.image_description_end}")
             section_lines.append("")
 
         section_text = "\n".join(section_lines).strip()
@@ -365,11 +368,20 @@ def extract_ollama_settings_from_job_input(
     Returns:
         OllamaSettings: A validated configuration object for Ollama.
     """
-    ollama_input = {
-        k[len("ollama_"):]: v
-        for k, v in job_input.items()
-        if k.startswith("ollama_")
-    }
+    # Valid OllamaSettings field names (check via model_fields)
+    valid_ollama_fields = set(OllamaSettings.model_fields.keys())
+
+    ollama_input = {}
+    for k, v in job_input.items():
+        if k.startswith("ollama_"):
+            field_name = k[len("ollama_"):]
+            if field_name not in valid_ollama_fields:
+                logger.warning(
+                    f"Unknown ollama setting '{k}' in job input. "
+                    f"Valid fields: {sorted(valid_ollama_fields)}"
+                )
+            ollama_input[field_name] = v
+
     return OllamaSettings(app_config, **ollama_input)
 
 def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerSettings:
@@ -383,11 +395,20 @@ def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerS
     Returns:
         MarkerSettings: A validated configuration object for Marker.
     """
-    marker_input = {
-        k[len("marker_"):]: v
-        for k, v in job_input.items()
-        if k.startswith("marker_")
-    }
+    # Valid MarkerSettings field names (check via model_fields)
+    valid_marker_fields = set(MarkerSettings.model_fields.keys())
+
+    marker_input = {}
+    for k, v in job_input.items():
+        if k.startswith("marker_"):
+            field_name = k[len("marker_"):]
+            if field_name not in valid_marker_fields:
+                logger.warning(
+                    f"Unknown marker setting '{k}' in job input. "
+                    f"Valid fields: {sorted(valid_marker_fields)}"
+                )
+            marker_input[field_name] = v
+
     # Add shared parameters
     marker_input["output_format"] = job_input.get("output_format", "markdown")
     return MarkerSettings(**marker_input)
@@ -538,7 +559,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         with mp.Pool(
             processes=optimal_marker_workers,
             initializer=marker_worker_init,
-            maxtasksperchild=10  # Recycle workers periodically to free VRAM
+            maxtasksperchild=marker_settings.maxtasksperchild  # Recycle workers periodically to free VRAM
         ) as pool:
             # Process files and collect results
             results = pool.starmap(marker_process_single_file, task_args)

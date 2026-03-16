@@ -13,7 +13,13 @@ Global application configuration loaded from environment variables.
 *   `HANDLER_FILE_NAME` (str): Name of the handler file.
 *   `CLEANUP_OUTPUT_DIR_BEFORE_START` (bool): Whether to cleanup the output directory before starting.
 *   `USE_POSTPROCESS_LLM` (bool): Whether to use an LLM for post-processing.
-*   `HF_HOME` (Optional[Path]): Hugging Face home directory.
+*   `HF_HOME` (Path): Hugging Face home directory (auto-computed from volume root via default_factory if not set).
+*   `OLLAMA_MODELS` (Path): Ollama models directory (auto-computed from volume root via default_factory if not set).
+*   `OLLAMA_LOG_DIR` (Path): Ollama logs directory (auto-computed from volume root via default_factory if not set).
+*   `block_correction_prompts_file_path` (Path): Path to prompts JSON file (auto-computed via default_factory).
+*   `block_correction_prompts_library` (dict[str, str]): Loaded prompt templates (auto-loaded from file via default_factory).
+
+**Note**: Paths with auto-computed defaults use `default_factory` with validated data (requires Pydantic 2.10+).
 
 ### `MarkerSettings(BaseModel)`
 Configuration for the Marker PDF processing, typically extracted from job input.
@@ -25,6 +31,7 @@ Configuration for the Marker PDF processing, typically extracted from job input.
 *   `page_range` (Optional[str]): `MARKER_PAGE_RANGE`
 *   `processors` (Optional[str]): `MARKER_PROCESSORS`
 *   `output_format` (str): `MARKER_OUTPUT_FORMAT`
+*   `maxtasksperchild` (int): `MARKER_MAXTASKSPERCHILD` - Number of tasks per worker before recycling (default: 10)
 
 ### `OllamaSettings(BaseSettings)`
 Configuration for the Ollama worker, supporting environment variables (prefixed with `OLLAMA_`) and manual overrides.
@@ -50,5 +57,6 @@ Configuration for the Ollama worker, supporting environment variables (prefixed 
 
 ## Logic
 *   Uses `pydantic-settings` to automatically load values from the environment.
-*   Calculates absolute paths for `ollama_models`, `ollama_log_dir`, and `hf_home` based on `volume_root_mount_path`.
+*   Calculates absolute paths for `ollama_models`, `ollama_log_dir`, and `hf_home` based on `volume_root_mount_path` using Pydantic's `default_factory` with validated data (requires Pydantic 2.10+).
 *   Provides a structured way to handle job-specific overrides for both Marker and Ollama.
+*   Input validation warns users about unknown `marker_*` or `ollama_*` keys to help catch typos.

@@ -99,6 +99,17 @@ handler_module = _import_handler_module()
 class TestHandlerImageDescriptionHelpers(unittest.TestCase):
     """Tests for image discovery and text-append helper functions."""
 
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Set up test configuration that mimics GlobalConfig."""
+        cls.app_config = types.SimpleNamespace(
+            IMAGE_FILE_EXTENSIONS={".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"},
+            FILE_ENCODING="utf-8",
+            image_description_section_heading="## Extracted Image Descriptions",
+            image_description_heading="**[BEGIN IMAGE DESCRIPTION]**",
+            image_description_end="**[END IMAGE DESCRIPTION]**"
+        )
+
     def test_list_extracted_images_for_output_file_filters_and_sorts(self) -> None:
         """Should return only image files sorted by filename in the output folder."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -111,7 +122,10 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             (output_dir / "middle.webp").write_bytes(b"img")
             (output_dir / "notes.txt").write_text("ignore", encoding="utf-8")
 
-            images = handler_module.list_extracted_images_for_output_file(output_file)
+            images = handler_module.list_extracted_images_for_output_file(
+                self.app_config,
+                output_file
+            )
 
             self.assertEqual(
                 [image.name for image in images],
@@ -128,6 +142,7 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             )
 
             inserted = handler_module.insert_image_descriptions_to_text_file(
+                app_config=self.app_config,
                 output_file_path=output_file,
                 image_descriptions=[
                     (Path("image_1.png"), "A flowchart with three connected boxes."),
@@ -151,6 +166,7 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             output_file.write_text("Original marker text without tags.", encoding="utf-8")
 
             inserted = handler_module.insert_image_descriptions_to_text_file(
+                app_config=self.app_config,
                 output_file_path=output_file,
                 image_descriptions=[
                     (Path("missing.png"), "A description of a missing image."),
@@ -163,9 +179,10 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             self.assertIn("Original marker text without tags.", updated_text)
             self.assertIn("## Extracted Image Descriptions", updated_text)
             self.assertIn("### Image: `missing.png`", updated_text)
-            self.assertIn("**[BEGIN IMAGE DESCRIPTION]**", updated_text)
-            self.assertIn("A description of a missing image.", updated_text)
-            self.assertIn("**[END IMAGE DESCRIPTION]**", updated_text)
+            # Updated to match blockquote format
+            self.assertIn("> **[BEGIN IMAGE DESCRIPTION]**", updated_text)
+            self.assertIn("> A description of a missing image.", updated_text)
+            self.assertIn("> **[END IMAGE DESCRIPTION]**", updated_text)
 
     def test_insert_image_descriptions_to_text_file_skips_non_text_output(self) -> None:
         """Should not modify non-text outputs such as JSON files."""
@@ -175,6 +192,7 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             output_file.write_text(original_json, encoding="utf-8")
 
             inserted = handler_module.insert_image_descriptions_to_text_file(
+                app_config=self.app_config,
                 output_file_path=output_file,
                 image_descriptions=[(Path("image_1.png"), "Some description")],
             )

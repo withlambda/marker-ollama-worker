@@ -88,6 +88,14 @@ class OllamaWorker:
                 os.makedirs(self.settings.log_dir, exist_ok=True)
 
             logger.info(f"Ollama server logs will be written to: {log_file_path}")
+
+            # Close existing log file if open to prevent file descriptor leak
+            if self.log_file:
+                try:
+                    self.log_file.close()
+                except Exception as e:
+                    logger.warning(f"Error closing previous log file: {e}")
+
             self.log_file = open(log_file_path, "w")
             try:
                 # Start ollama serve
@@ -266,18 +274,19 @@ class OllamaWorker:
 
         The method takes a Hugging Face model name and quantization specification,
         then converts this information into the specific format required for Ollama
-        model names. If the model name contains a path element (e.g., "namespace/model"),
-        only the portion after the "/" is used as the base name. The quantization
-        specification is then appended to this base name, separated by a hyphen.
+        model names. To prevent namespace collisions, the full model path (including
+        namespace) is used to generate the model name.
 
         :param hf_model_name: The name of the Hugging Face model. It can include a namespace or subpath
-                              separated by a forward slash.
+                              separated by a forward slash (e.g., "namespace/model").
         :param hf_model_quantization: The quantization level of the Hugging Face model, which must be
                                        compatible with the Ollama format.
         :return: A string representing the transformed Ollama model name formatted as
-                 "<base_name>-<quantization>".
+                 "<namespace>-<model>-<quantization>" or "<model>-<quantization>" if no namespace.
         """
-        ollama_base_name = hf_model_name if '/' not in hf_model_name else hf_model_name.split('/',1)[1]
+        # Replace '/' with '-' to include namespace and prevent collisions
+        # e.g., "Qwen/Qwen3-VL" -> "qwen-qwen3-vl-q4_k_m"
+        ollama_base_name = hf_model_name.replace('/', '-')
 
         return (ollama_base_name + "-" + hf_model_quantization).lower()
 
@@ -319,7 +328,7 @@ class OllamaWorker:
             names_lower = [n.lower() for n in names]
             return model_name_lower in names_lower or any(m.startswith(f"{model_name_lower}:") for m in names_lower)
         except Exception as e:
-            logger.debug(f"Error checking model existence: {e}")
+            logger.warning(f"Error checking model existence: {e}")
             return False
 
     def _build_from_hf(self) -> None:
@@ -370,20 +379,48 @@ class OllamaWorker:
         logger.info(f"Using snapshot: {snapshot_path}")
 
         # Find GGUF file
-        # Equivalent to: find . -name "*hf_model_quantization*.gguf"
-        gguf_files = list(snapshot_path.glob(f"*{self.settings.hf_model_quantization}*.gguf"))
+        # Use more specific pattern: *-quantization.gguf or quantization.gguf
+        # This avoids matching files like "prefix-Q4_K_M-suffix.gguf" when looking for "Q4_K_M"
+        quantization = self.settings.hf_model_quantization
+        gguf_files = list(snapshot_path.glob("*.gguf"))
+
+        # Filter to files that match the quantization pattern more precisely
+        matching_files = []
+        for f in gguf_files:
+            name_lower = f.stem.lower()
+            quant_lower = quantization.lower()
+            # Match files ending with the quantization (e.g., "model-Q4_K_M.gguf")
+            # or containing it as a distinct token (e.g., "model.Q4_K_M.gguf")
+            if name_lower.endswith(f"-{quant_lower}") or name_lower.endswith(f".{quant_lower}") or name_lower == quant_lower:
+                matching_files.append(f)
+
+        # Fallback to a broader match if strict matching finds nothing
+        if not matching_files:
+            matching_files = [f for f in gguf_files if quantization.lower() in f.stem.lower()]
 
         model_file = None
         adapter_file = None
 
-        for f in gguf_files:
-            if "mmproj" in f.name:
+        for f in matching_files:
+            if "mmproj" in f.name.lower():
                 adapter_file = f
             else:
-                model_file = f
+                if model_file is not None:
+                    logger.warning(
+                        f"Multiple GGUF model files found for quantization '{quantization}': "
+                        f"{model_file.name} and {f.name}. Using shortest filename."
+                    )
+                    # Choose the shorter filename (likely the main model, not a variant)
+                    if len(f.name) < len(model_file.name):
+                        model_file = f
+                else:
+                    model_file = f
 
         if not model_file:
-            raise FileNotFoundError(f"No GGUF file matching '{self.settings.hf_model_quantization}' found in {snapshot_path}")
+            raise FileNotFoundError(
+                f"No GGUF file matching quantization '{quantization}' found in {snapshot_path}. "
+                f"Available GGUF files: {[f.name for f in gguf_files]}"
+            )
 
         # Set self.settings.model for the rest of the process
         # Ollama model names are typically lowercase.

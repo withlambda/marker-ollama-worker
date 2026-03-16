@@ -197,6 +197,7 @@ The following `marker_`-prefixed keys can be used in the `input` section of the 
 | `marker_page_range`               | Page range to convert (e.g., "0,5-10").                         | `None`     |
 | `marker_processors`               | Comma-separated list of marker processors to run.               | `None`     |
 | `marker_output_format`            | The format of the output (markdown, json, etc.).                | `markdown` |
+| `marker_maxtasksperchild`         | Tasks per worker before recycling (prevents memory leaks).      | `10`       |
 
 #### Ollama Configuration Overrides
 
@@ -386,29 +387,30 @@ Output Formatting: Provide ONLY the corrected text in clean Markdown.
 
 The worker can be configured using environment variables. For `OllamaSettings` and `MarkerSettings`, properties can be set using the `OLLAMA_` or `MARKER_` prefix respectively (e.g., `MARKER_WORKERS`, `OLLAMA_CONTEXT_LENGTH`).
 
-| Variable                                 | Description                                               | Default                                          |
-|:-----------------------------------------|:----------------------------------------------------------|:-------------------------------------------------|
-| `VOLUME_ROOT_MOUNT_PATH`                 | Base path for storage (Required).                         | **None** (Must be set)                           |
-| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing for the output results.        | `true`                                           |
-| `CLEANUP_OUTPUT_DIR_BEFORE_START`        | Delete output directory before starting.                  | `false`                                          |
-| `OLLAMA_MODEL`                           | Name of the Ollama model to use/pull.                     | (Optional)                                       |
-| `OLLAMA_HUGGING_FACE_MODEL_NAME`         | HF Model ID to build from (if `OLLAMA_MODEL` unset).      | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
-| `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` | Quantization string to match GGUF file.                   | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
-| `OLLAMA_CONTEXT_LENGTH`                  | Context window length (tokens) per request.               | `4096`                                           |
-| `OLLAMA_VRAM_FACTOR`                     | VRAM (GB) per token for context calculation.              | `0.00013`                                        |
-| `OLLAMA_IMAGE_DESCRIPTION_PROMPT`        | Default prompt template for extracted image descriptions. | (Optional)                                       |
-| `HF_HOME`                                | Path to Hugging Face cache.                               | `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache`    |
-| `OLLAMA_MODELS`                          | Absolute path to Ollama models directory.                 | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/models`       |
-| `OLLAMA_LOG_DIR`                            | Absolute path to Ollama logs directory.                   | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/logs`         |
-| `MARKER_DEBUG`                           | Enable debug mode.                                        | `False`                                          |
-| `MARKER_WORKERS`                         | Number of Marker workers (env-level default).             | `auto`                                           |
-| `MARKER_PAGINATE_OUTPUT`                 | Whether to paginate output (env-level default).           | `false`                                          |
-| `MARKER_FORCE_OCR`                       | Force OCR even if text is present.                        | `false`                                          |
-| `MARKER_DISABLE_MULTIPROCESSING`         | Disable internal Marker multiprocessing.                  | `false`                                          |
-| `MARKER_DISABLE_IMAGE_EXTRACTION`        | Disable extraction of images.                             | `false`                                          |
-| `MARKER_PAGE_RANGE`                      | Default page range to convert.                            | `None`                                           |
-| `MARKER_PROCESSORS`                      | Default processors to run.                                | `None`                                           |
-| `MARKER_OUTPUT_FORMAT`                   | Default output format (markdown, json, etc.).             | `markdown`                                       |
+| Variable                                 | Description                                                | Default                                          |
+|:-----------------------------------------|:-----------------------------------------------------------|:-------------------------------------------------|
+| `VOLUME_ROOT_MOUNT_PATH`                 | Base path for storage (Required).                          | **None** (Must be set)                           |
+| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing for the output results.         | `true`                                           |
+| `CLEANUP_OUTPUT_DIR_BEFORE_START`        | Delete output directory before starting.                   | `false`                                          |
+| `OLLAMA_MODEL`                           | Name of the Ollama model to use/pull.                      | (Optional)                                       |
+| `OLLAMA_HUGGING_FACE_MODEL_NAME`         | HF Model ID to build from (if `OLLAMA_MODEL` unset).       | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
+| `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` | Quantization string to match GGUF file.                    | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
+| `OLLAMA_CONTEXT_LENGTH`                  | Context window length (tokens) per request.                | `4096`                                           |
+| `OLLAMA_VRAM_FACTOR`                     | VRAM (GB) per token for context calculation.               | `0.00013`                                        |
+| `OLLAMA_IMAGE_DESCRIPTION_PROMPT`        | Default prompt template for extracted image descriptions.  | (Optional)                                       |
+| `HF_HOME`                                | Path to Hugging Face cache.                                | `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache`    |
+| `OLLAMA_MODELS`                          | Absolute path to Ollama models directory.                  | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/models`       |
+| `OLLAMA_LOG_DIR`                         | Absolute path to Ollama logs directory.                    | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/logs`         |
+| `MARKER_DEBUG`                           | Enable debug mode.                                         | `False`                                          |
+| `MARKER_WORKERS`                         | Number of Marker workers (env-level default).              | `auto`                                           |
+| `MARKER_PAGINATE_OUTPUT`                 | Whether to paginate output (env-level default).            | `false`                                          |
+| `MARKER_FORCE_OCR`                       | Force OCR even if text is present.                         | `false`                                          |
+| `MARKER_DISABLE_MULTIPROCESSING`         | Disable internal Marker multiprocessing.                   | `false`                                          |
+| `MARKER_DISABLE_IMAGE_EXTRACTION`        | Disable extraction of images.                              | `false`                                          |
+| `MARKER_PAGE_RANGE`                      | Default page range to convert.                             | `None`                                           |
+| `MARKER_PROCESSORS`                      | Default processors to run.                                 | `None`                                           |
+| `MARKER_OUTPUT_FORMAT`                   | Default output format (markdown, json, etc.).              | `markdown`                                       |
+| `MARKER_MAXTASKSPERCHILD`                | Tasks per worker before recycling (prevents memory leaks). | `10`                                             |
 
 ### Performance Tuning Variables
 
