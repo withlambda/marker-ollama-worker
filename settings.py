@@ -277,6 +277,14 @@ class OllamaSettings(BaseSettings):
                         "based on VRAM/Context calculation: "
                         f"ollama_num_parallel={self.num_parallel}")
 
+        # Cap chunk_workers to num_parallel to avoid overwhelming the Ollama server
+        # with more concurrent requests than it can handle, which causes
+        # "model runner has unexpectedly stopped" crashes on resource-limited environments.
+        if self.chunk_workers > self.num_parallel:
+            logger.info(f"Capping chunk_workers from {self.chunk_workers} to {self.num_parallel} "
+                        f"(matching ollama_num_parallel) to prevent server overload.")
+            self.chunk_workers = self.num_parallel
+
         # determine the block correction prompt
         if not self.block_correction_prompt:
             if self.block_correction_prompt_key:

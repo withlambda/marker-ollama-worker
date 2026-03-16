@@ -55,11 +55,13 @@ class OllamaWorker:
 
     def __enter__(self) -> 'OllamaWorker':
         """
-        Context manager support: starts the server and ensures the model is ready.
+        Context manager support: starts the server, ensures the model is ready,
+        and preloads the model into VRAM (empty prompt, per Ollama FAQ).
         """
         try:
             self.start_server()
             self.ensure_model()
+            self._warmup_model()
         except Exception:
             self.stop_server()
             raise
@@ -216,6 +218,99 @@ class OllamaWorker:
                     logger.error(f"Error closing Ollama log file: {e}")
                 finally:
                     self.log_file = None
+
+    def _warmup_model(self, max_retries: int = 3) -> None:
+        """
+        Preloads the model into VRAM by sending an empty generate request.
+
+        Per the Ollama FAQ (https://docs.ollama.com/faq#how-can-i-preload-a-model-into-ollama-to-get-faster-response-times),
+        sending a generate request with an empty prompt causes Ollama to load
+        the model into memory without producing a response. This is faster and
+        more efficient than sending a real test prompt.
+
+        This prevents the "model runner has unexpectedly stopped" crash that
+        occurs when many parallel requests hit the model before it is fully loaded.
+
+        Args:
+            max_retries (int): Maximum number of preload attempts.
+
+        Raises:
+            RuntimeError: If the model fails to preload after all attempts.
+        """
+        if not self.settings.model:
+            logger.warning("Skipping model preload: no model configured.")
+            return
+
+        logger.info(f"Preloading model '{self.settings.model}' into VRAM...")
+        for attempt in range(max_retries):
+            try:
+                self.client.generate(
+                    model=self.settings.model,
+                    prompt="",
+                    stream=False,
+                )
+                logger.info(f"Model '{self.settings.model}' preloaded successfully.")
+                self._verify_gpu_loading()
+                return
+            except Exception as e:
+                delay = 5 * (attempt + 1)
+                logger.warning(
+                    f"Model preload attempt {attempt + 1}/{max_retries} failed: {e}. "
+                    f"Retrying in {delay}s..."
+                )
+                time.sleep(delay)
+
+        raise RuntimeError(
+            f"Model '{self.settings.model}' failed to preload after {max_retries} attempts. "
+            f"This may indicate insufficient VRAM or a corrupted model."
+        )
+
+    def _verify_gpu_loading(self) -> None:
+        """
+        Verifies that the model is loaded and reports its processor placement (GPU/CPU).
+
+        Uses ``ollama ps`` to inspect the running model status, as recommended by
+        the Ollama FAQ (https://docs.ollama.com/faq#how-can-i-tell-if-my-model-was-loaded-onto-the-gpu).
+        The output includes the model name, size, processor type, and time remaining
+        until the model is evicted from memory.
+
+        This is an informational check — it logs the results but does not raise
+        exceptions, since CPU-only execution is still valid in environments without GPUs.
+        """
+        try:
+            result = subprocess.check_output(
+                ["ollama", "ps"],
+                encoding="utf-8",
+                timeout=10,
+            )
+            logger.info(f"Ollama ps output:\n{result.strip()}")
+
+            # Parse the output to check if the model is loaded and on which processor
+            lines = result.strip().splitlines()
+            if len(lines) > 1:
+                for line in lines[1:]:  # Skip the header row
+                    if self.settings.model and self.settings.model in line:
+                        if "GPU" in line.upper():
+                            logger.info(f"Model '{self.settings.model}' confirmed loaded on GPU.")
+                        elif "CPU" in line.upper():
+                            logger.warning(
+                                f"Model '{self.settings.model}' is loaded on CPU. "
+                                f"Performance may be significantly degraded. "
+                                f"Check that your GPU drivers and VRAM are properly configured."
+                            )
+                        else:
+                            logger.info(f"Model '{self.settings.model}' is loaded (processor: unknown).")
+                        return
+            logger.warning(
+                f"Model '{self.settings.model}' was not found in 'ollama ps' output. "
+                f"The model may not be loaded into memory."
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("Timed out running 'ollama ps'. Skipping GPU verification.")
+        except FileNotFoundError:
+            logger.warning("'ollama' CLI not found. Skipping GPU verification.")
+        except Exception as e:
+            logger.warning(f"Could not verify GPU loading via 'ollama ps': {e}")
 
     def _wait_for_ready(
         self,
@@ -560,22 +655,27 @@ class OllamaWorker:
                 ])
 
                 if retryable and not is_last_attempt:
+                    # Use longer base delay for severe errors (model runner crash)
+                    is_severe = "model runner" in error_msg or "unexpectedly stopped" in error_msg
+                    base_delay = (self.settings.retry_delay * 3) if is_severe else self.settings.retry_delay
+
                     # Exponential backoff with jitter
-                    delay = (self.settings.retry_delay * (2 ** attempt)) + (random.random() * self.settings.retry_delay)
+                    delay = (base_delay * (2 ** attempt)) + (random.random() * self.settings.retry_delay)
                     logger.warning(
                         f"Retryable error processing chunk {chunk_index} "
                         f"(attempt {attempt + 1}/{self.settings.max_retries + 1}). "
                         f"Retrying in {delay:.2f}s... Error: {e}"
                     )
 
-                    # If it was a connection refused, check if server process is actually alive
-                    if "connection refused" in error_msg and self.process:
+                    # If it was a connection refused or model runner crash, check server health
+                    if ("connection refused" in error_msg or is_severe) and self.process:
                         if self.process.poll() is not None:
                             logger.error(f"Ollama server process died (PID {self.process.pid}). "
                                          f"Attempting to restart...")
                             # start_server handles the lock and re-initialization
                             try:
                                 self.start_server()
+                                self._warmup_model(max_retries=2)
                             except Exception as start_err:
                                 logger.error(f"Failed to restart Ollama server: {start_err}")
 

@@ -182,7 +182,7 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
 
 *   `ollama_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM. Takes priority over `block_correction_prompt_key`.
 *   `block_correction_prompt_key`: (Optional) A key referencing a predefined prompt from the [Block Correction Prompt Catalog](#block-correction-prompt-catalog). Ignored if `ollama_block_correction_prompt` is provided.
-*   `ollama_chunk_workers`: (Optional) Number of parallel workers for chunk processing and image description generation. Default: auto-calculated.
+*   `ollama_chunk_workers`: (Optional) Number of parallel workers for chunk processing and image description generation. Default: 16, but automatically capped to `OLLAMA_NUM_PARALLEL` to prevent server overload.
 *   `ollama_image_description_prompt`: (Optional) Custom prompt for extracted image descriptions. If omitted, a built-in factual vision prompt is used.
 
 When marker image extraction is enabled, the LLM post-processing phase also describes each extracted image and inserts the descriptions directly into text outputs (`.md`/`.txt`), ideally placed immediately following their corresponding image tags. To ensure clarity for LLMs like NotebookLM or AnythingLM, these descriptions are wrapped in explicit `[BEGIN IMAGE DESCRIPTION]` and `[END IMAGE DESCRIPTION]` markers. If a matching tag cannot be found, the descriptions are appended as a fallback section at the end of the file. Non-text outputs are left unchanged.
@@ -424,13 +424,13 @@ The worker includes adaptive parallelization to maximize GPU utilization (optimi
 |:-------------------------|:-------------------------------------------------------------------------------------------------|:----------|:------------------|
 | `VRAM_GB_TOTAL`          | Total VRAM available on your GPU (used for auto-tuning worker counts).                           | `24`      | `8-80`            |
 | `OLLAMA_CHUNK_SIZE`      | Characters per chunk for LLM processing. Smaller = more parallelism, larger = better context.    | `4000`    | `2000-8000`       |
-| `MARKER_VRAM_PER_WORKER` | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.               | `5`       | `3-6`             |
+| `MARKER_VRAM_GB_PER_WORKER` | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.               | `5`       | `3-6`             |
 | `OLLAMA_CONTEXT_LENGTH`  | Context length (tokens) per request. Used for auto-calculating `OLLAMA_NUM_PARALLEL`.            | `4096`    | `2048-32768`      |
 | `OLLAMA_VRAM_FACTOR`     | VRAM (GB) per token. Used for auto-calculating `OLLAMA_NUM_PARALLEL` (default: 0.00013).         | `0.00013` | `0.0001-0.0005`   |
-| `OLLAMA_BASE_VRAM_GB`    | Estimated VRAM (GB) for the base model weights. Used for auto-calculating `OLLAMA_NUM_PARALLEL`. | `8`       | `2-16`            |
+| `OLLAMA_VRAM_GB_MODEL`    | Estimated VRAM (GB) for the base model weights. Used for auto-calculating `OLLAMA_NUM_PARALLEL`. | `8`       | `2-16`            |
 | `OLLAMA_MAX_RETRIES`     | Maximum retries for LLM chunk processing on transient/recoverable errors.                        | `3`       | `1-10`            |
 | `OLLAMA_RETRY_DELAY`     | Base delay (seconds) for exponential backoff between retries.                                    | `2.0`     | `1.0-5.0`         |
-| `OLLAMA_NUM_PARALLEL`    | Max parallel requests per model (auto-set to `ollama_chunk_workers` if unset).                   | `auto`    | `1-8`             |
+| `OLLAMA_NUM_PARALLEL`    | Max parallel requests per model (auto-calculated from VRAM if unset). `ollama_chunk_workers` is automatically capped to this value. | `auto`    | `1-8`             |
 | `OLLAMA_FLASH_ATTENTION` | Enable Flash Attention for improved memory efficiency.                                           | `1`       | `0, 1`            |
 | `OLLAMA_KV_CACHE_TYPE`   | Quantization type for K/V cache (e.g., `f16`, `q8_0`, `q4_0`).                                   | `f16`     | `f16, q8_0, q4_0` |
 | `OLLAMA_MAX_QUEUE`       | Maximum number of queued requests before rejection.                                              | `512`     | `100-2048`        |
@@ -443,7 +443,9 @@ When set to `auto` (default), the worker automatically optimizes parallelism bas
 **Ollama Concurrency**:
 - `OLLAMA_NUM_PARALLEL` is calculated based on available VRAM and context window size:
   `parallel = floor((TOTAL_VRAM - VRAM_RESERVE - OLLAMA_BASE_VRAM) / (OLLAMA_VRAM_FACTOR * OLLAMA_CONTEXT_LENGTH))`
-- `ollama_chunk_workers` (Python threads) is set to a high default (16) to ensure Ollama's internal request queue stays saturated, maximizing GPU throughput.
+- `ollama_chunk_workers` (Python threads) defaults to 16, but is **automatically capped** to `OLLAMA_NUM_PARALLEL` to prevent overwhelming the Ollama server with more concurrent requests than it can handle.
+- Before processing begins, the model is **preloaded** into VRAM by sending an empty prompt to the Ollama server (per [Ollama FAQ](https://docs.ollama.com/faq#how-can-i-preload-a-model-into-ollama-to-get-faster-response-times)). This prevents "model runner has unexpectedly stopped" crashes when many parallel requests arrive before the model is ready.
+- After preloading, the worker runs `ollama ps` to **verify GPU loading** (per [Ollama FAQ](https://docs.ollama.com/faq#how-can-i-tell-if-my-model-was-loaded-onto-the-gpu)). If the model is running on CPU instead of GPU, a warning is logged to help diagnose performance or driver issues.
 
 **Marker Concurrency**:
 - `marker_workers` is scaled based on number of files and available VRAM (capped at 4).
@@ -452,17 +454,17 @@ When set to `auto` (default), the worker automatically optimizes parallelism bas
 
 **Single File** (1 file):
 - `marker_workers=1` (no file-level parallelism needed)
-- `ollama_chunk_workers` (high thread count to saturate queue)
+- `ollama_chunk_workers` (capped to `OLLAMA_NUM_PARALLEL`)
 - **Best for**: Processing single large PDFs efficiently
 
 **Small Batch** (2-3 files):
 - `marker_workers` (moderate file parallelism, up to 2)
-- `ollama_chunk_workers` (high chunk parallelism, capped at 4)
+- `ollama_chunk_workers` (capped to `OLLAMA_NUM_PARALLEL`)
 - **Best for**: Medium workloads with moderate-sized PDFs
 
 **Large Batch** (4+ files):
 - `marker_workers` (maximize marker file parallelism, up to 4)
-- `ollama_chunk_workers` (maximize chunk parallelism, files processed sequentially)
+- `ollama_chunk_workers` (capped to `OLLAMA_NUM_PARALLEL`, files processed sequentially)
 - **Best for**: Batch processing many small-to-medium PDFs
 
 *Note: All auto-calculations are bounded by available VRAM (VRAM_GB_TOTAL).*
@@ -486,7 +488,7 @@ OLLAMA_CONTEXT_LENGTH=8192
 
 # Example: 16GB VRAM GPU, small LLM models - conservative settings
 VRAM_GB_TOTAL=16
-OLLAMA_BASE_VRAM_GB=4
+OLLAMA_VRAM_GB_MODEL=4
 
 # Example: Disable LLM parallelization via "ollama_chunk_workers=1" in json input of serverless endpoint (troubleshooting)
 ollama_chunk_workers=1
