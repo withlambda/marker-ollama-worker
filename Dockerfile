@@ -76,5 +76,7 @@ COPY *.py block_correction_prompts.json ./
 RUN	groupadd -r appgroup && useradd -r -g appgroup -u 1000 -m -d /home/appuser appuser && \
     chown -R appuser:appgroup /app /home/appuser
 
+ENV HANDLER_FILE_NAME="handler.py"
+
 # 8. START COMMAND
-CMD [ "python3", "-u", "handler.py" ]
+CMD python3 -u  "${HANDLER_FILE_NAME}"

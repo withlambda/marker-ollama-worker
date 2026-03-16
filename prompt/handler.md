@@ -27,7 +27,7 @@ Moves marker models from the GPU to the CPU and clears the CUDA cache. This is u
 Loads the prompt catalog from `block_correction_prompts.json` into `BLOCK_CORRECTION_PROMPT_LIBRARY`.
 
 #### `calculate_optimal_workers(num_files: int, use_postprocess_llm: bool, marker_workers_override: Optional[int] = None) -> Tuple[int, int, int]`
-Calculates optimal worker counts for Marker (`marker_workers`), Ollama thread count (`ollama_chunk_workers`), and Ollama parallelism (`ollama_num_parallel`) based on workload and available VRAM (`TOTAL_VRAM_GB`, `MARKER_VRAM_PER_WORKER`, `OLLAMA_BASE_VRAM_GB`, `OLLAMA_VRAM_FACTOR`, `OLLAMA_CONTEXT_LENGTH`).
+Calculates optimal worker counts for Marker (`marker_workers`), Ollama thread count (`ollama_chunk_workers`), and Ollama parallelism (`ollama_num_parallel`) based on workload and available VRAM (`VRAM_GB_TOTAL`, `MARKER_VRAM_PER_WORKER`, `OLLAMA_BASE_VRAM_GB`, `OLLAMA_VRAM_FACTOR`, `OLLAMA_CONTEXT_LENGTH`).
 1.  **Marker Workers**: Scaled based on `num_files` and VRAM availability (capped at 4).
 2.  **Ollama Parallelism (`ollama_num_parallel`)**: Calculated using the context VRAM formula:
     `parallel = floor((TOTAL_VRAM - VRAM_RESERVE - OLLAMA_BASE_VRAM) / (OLLAMA_VRAM_FACTOR * OLLAMA_CONTEXT_LENGTH))`

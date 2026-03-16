@@ -53,6 +53,25 @@ class OllamaWorker:
         """
         self.stop_server()
 
+    def __enter__(self) -> 'OllamaWorker':
+        """
+        Context manager support: starts the server and ensures the model is ready.
+        """
+        try:
+            self.start_server()
+            self.ensure_model()
+        except Exception:
+            self.stop_server()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Context manager support: stops the server and unloads the model.
+        """
+        self.unload_model()
+        self.stop_server()
+
 
     def start_server(self) -> None:
         """
@@ -212,54 +231,77 @@ class OllamaWorker:
             RuntimeError: If the Ollama server fails to start or become responsive within the timeout.
         """
         logger.info("Waiting for Ollama to start...")
+        last_error = "No error recorded"
         for i in range(max_retries):
             try:
                 # Simple health check using requests or client.list()
                 self.client.list()
                 logger.info("Ollama is up and running!")
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                last_error = str(e)
 
             if self.process and self.process.poll() is not None:
-                raise RuntimeError("Ollama process exited unexpectedly.")
+                # Process died, maybe capture some stderr?
+                # We can't easily read from self.log_file while it's open for the process
+                raise RuntimeError(f"Ollama process (PID {self.process.pid}) exited unexpectedly with code {self.process.returncode}.")
 
-            logger.info(f"Waiting for Ollama... ({i+1}/{max_retries})")
+            logger.info(f"Waiting for Ollama... ({i+1}/{max_retries}) - Last error: {last_error}")
             time.sleep(2)
 
-        raise RuntimeError("Ollama failed to start within the timeout period.")
+        raise RuntimeError(f"Ollama failed to start within the timeout period ({max_retries * 2}s). Last error: {last_error}")
 
     def ensure_model(self) -> None:
         """
         Ensures the configured model exists in the Ollama instance.
 
-        If model is specified, it checks if it exists and pulls it if not.
-        If model is NOT specified, it attempts to build a model from a local Hugging Face
-        model cache directory, as specified by other configuration.
+        This method implements a resilient model discovery strategy:
+        1.  Determine the target model name (either from settings or derived from HF specs).
+        2.  Check if the model already exists in Ollama.
+        3.  If not found, attempt to pull it from the Ollama registry.
+        4.  If pull fails (e.g., private model, registry down), attempt to build it from
+            a local Hugging Face model cache (if configured).
 
         Raises:
-            RuntimeError: If pulling or creating the model fails.
+            RuntimeError: If the model cannot be found, pulled, or built.
         """
         model_name = self.settings.model or self._get_ollama_model_name_from_hf_specification(
             hf_model_name=self.settings.hf_model_name,
             hf_model_quantization=self.settings.hf_model_quantization
         )
 
-        if model_name:
-            # Case 1: Model Name specified - Check/Pull
-            if not self._check_model_exists(model_name):
-                logger.info(f"Model '{model_name}' not found. Pulling from registry...")
-                try:
-                    # Use the client to pull
-                    self.client.pull(model_name)
-                    logger.info(f"Successfully pulled model '{model_name}'")
-                except Exception as e:
-                    raise RuntimeError(f"Failed to pull model '{model_name}': {e}")
-            else:
-                logger.info(f"Model '{model_name}' found locally.")
-        else:
-            # Case 2: No model - Build from HF
-            self._build_from_hf()
+        if not model_name:
+             # This should only happen if both settings.model and hf specs are empty
+             # build_from_hf will catch this and report missing config
+             self._build_from_hf()
+             return
+
+        # Case 1: Check if already exists
+        if self._check_model_exists(model_name):
+            logger.info(f"Model '{model_name}' found locally in Ollama.")
+            if not self.settings.model:
+                self.settings.model = model_name
+            return
+
+        # Case 2: Attempt to Pull
+        logger.info(f"Model '{model_name}' not found. Attempting to pull from registry...")
+        try:
+            self.client.pull(model_name)
+            logger.info(f"Successfully pulled model '{model_name}'")
+            if not self.settings.model:
+                self.settings.model = model_name
+            return
+        except Exception as e:
+            logger.warning(f"Failed to pull model '{model_name}': {e}. "
+                         f"Falling back to local build if HF configuration is available.")
+
+        # Case 3: Fallback to Build from HF
+        try:
+            self._build_from_hf(desired_model_name=model_name)
+        except Exception as build_err:
+            logger.error(f"Failed to build model from HF: {build_err}")
+            raise RuntimeError(f"Could not ensure model '{model_name}': "
+                             f"Pull failed and Build failed.") from build_err
 
         if not self.settings.model:
             self.settings.model = model_name
@@ -331,12 +373,16 @@ class OllamaWorker:
             logger.warning(f"Error checking model existence: {e}")
             return False
 
-    def _build_from_hf(self) -> None:
+    def _build_from_hf(self, desired_model_name: Optional[str] = None) -> None:
         """
         Builds an Ollama model from GGUF files found in a Hugging Face cache.
 
         Uses hf_home, hf_model_name, and hf_model_quantization configuration to
         locate the model files and construct the Modelfile.
+
+        Args:
+            desired_model_name (str, optional): The name to give to the created Ollama model.
+                                               If None, it uses the GGUF filename.
 
         Raises:
             FileNotFoundError: If the model directory, snapshots, or GGUF files are missing.
@@ -359,17 +405,24 @@ class OllamaWorker:
         if not base_path.exists():
             raise FileNotFoundError(f"Hugging Face model directory not found: {base_path}")
 
-        # Find snapshot (refs/main or first dir)
-        refs_main = base_path / "refs" / "main"
-        if refs_main.exists():
-            ref = refs_main.read_text().strip()
-            snapshot_path = base_path / "snapshots" / ref
-        else:
-            # Fallback to first snapshot
+        # Find snapshot (refs/main or latest snapshot)
+        ref_path = base_path / "refs" / "main"
+        snapshot_path = None
+        if ref_path.exists():
+            try:
+                ref = ref_path.read_text().strip()
+                snapshot_path = base_path / "snapshots" / ref
+            except Exception as e:
+                logger.warning(f"Could not read refs/main: {e}")
+
+        if not snapshot_path or not snapshot_path.exists():
+            # Fallback: Find the latest snapshot by modification time
             snapshots_dir = base_path / "snapshots"
             if snapshots_dir.exists():
                 snapshots = [d for d in snapshots_dir.iterdir() if d.is_dir()]
                 if snapshots:
+                    # Sort by modification time, latest first
+                    snapshots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                     snapshot_path = snapshots[0]
                 else:
                     raise FileNotFoundError(f"No snapshots found in {snapshots_dir}")
@@ -380,7 +433,6 @@ class OllamaWorker:
 
         # Find GGUF file
         # Use more specific pattern: *-quantization.gguf or quantization.gguf
-        # This avoids matching files like "prefix-Q4_K_M-suffix.gguf" when looking for "Q4_K_M"
         quantization = self.settings.hf_model_quantization
         gguf_files = list(snapshot_path.glob("*.gguf"))
 
@@ -389,8 +441,6 @@ class OllamaWorker:
         for f in gguf_files:
             name_lower = f.stem.lower()
             quant_lower = quantization.lower()
-            # Match files ending with the quantization (e.g., "model-Q4_K_M.gguf")
-            # or containing it as a distinct token (e.g., "model.Q4_K_M.gguf")
             if name_lower.endswith(f"-{quant_lower}") or name_lower.endswith(f".{quant_lower}") or name_lower == quant_lower:
                 matching_files.append(f)
 
@@ -410,7 +460,6 @@ class OllamaWorker:
                         f"Multiple GGUF model files found for quantization '{quantization}': "
                         f"{model_file.name} and {f.name}. Using shortest filename."
                     )
-                    # Choose the shorter filename (likely the main model, not a variant)
                     if len(f.name) < len(model_file.name):
                         model_file = f
                 else:
@@ -422,17 +471,16 @@ class OllamaWorker:
                 f"Available GGUF files: {[f.name for f in gguf_files]}"
             )
 
-        # Set self.settings.model for the rest of the process
-        # Ollama model names are typically lowercase.
-        final_model_name = model_file.stem.lower()
+        # Determine the model name in Ollama
+        final_model_name = desired_model_name or model_file.stem.lower()
         self.settings.model = final_model_name
-        logger.info(f"Resolved Ollama Model Name: {final_model_name}")
+        logger.info(f"Ollama Model Name will be: {final_model_name}")
 
         if self._check_model_exists(final_model_name):
             logger.info(f"Ollama model '{final_model_name}' already exists.")
             return
 
-        logger.info(f"Building Ollama model '{final_model_name}'...")
+        logger.info(f"Building Ollama model '{final_model_name}' from {model_file.name}...")
 
         # Prepare Modelfile content
         # Quoting paths in the Modelfile is recommended to avoid issues with special characters.

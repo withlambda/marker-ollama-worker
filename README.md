@@ -80,19 +80,23 @@ If you suspect Ollama is running on RAM (CPU) instead of VRAM (GPU), check the f
 
 ### Ollama model
 
-This worker supports two methods for managing Ollama models:
+This worker supports two primary methods for managing Ollama models, with a resilient fallback strategy:
 
-#### 1. Pull from Cached Ollama Registry (via mounted volume)
-Set the `OLLAMA_MODEL` environment variable (e.g., `llama3`). The worker will attempt to pull this model from the cached Ollama registry if it is not present. Note that the cached registry
-must be mounted to the directory path specified by the environment variable `OLLAMA_MODELS`.
+#### 1. Resilient Pull & Build (Automatic)
+The worker implements a multi-step discovery strategy for the model specified by `OLLAMA_MODEL`:
+1.  **Check Local**: It first checks if the model is already present in the local Ollama registry.
+2.  **Pull**: If not found, it attempts to pull the model from the Ollama registry.
+3.  **Fallback to Build**: If the pull fails (e.g., private model or registry issue) AND the Hugging Face configuration is provided (`OLLAMA_HUGGING_FACE_MODEL_NAME` and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION`), it will automatically attempt to **build** the model from your local Hugging Face cache.
 
-#### 2. Build from Hugging Face Cache (Offline/Mounted)
-If there is access to the hugging face cache, for example via mounted volumes,
-a `GGUF` hugging face model available in that hugging face cache can be specified via the two environment variables
-`OLLAMA_HUGGING_FACE_MODEL_NAME` (e.g., `Qwen/Qwen3-VL-8B-Thinking-GGUF`) and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` (e.g., `Q4_K_M`). **For this to work, `OLLAMA_MODEL` must be unset**, such that the ollama model itself is generated from the
-hugging face model. The hugging face cache must be available under the mounted volume root, specified by `VOLUME_ROOT_MOUNT_PATH` and the `HF_HOME` environment variable must be set accordingly to the cache path.
+This ensures that once a model is specified, the worker will do its best to make it available using all configured sources.
 
-The worker will look for the GGUF file in `HF_HOME` and create the Ollama model locally before processing.
+#### 2. Direct Build from Hugging Face Cache (Offline/Mounted)
+If you wish to skip the registry pull entirely and always build from your HF cache, ensure `OLLAMA_MODEL` is unset while providing the HF-specific variables.
+
+For the build process to work:
+- `OLLAMA_HUGGING_FACE_MODEL_NAME` (e.g., `Qwen/Qwen2.5-VL-3B-Instruct-GGUF`) and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` (e.g., `Q4_K_M`) must be set.
+- The Hugging Face cache must be mounted under the path specified by `HF_HOME`.
+- The worker will identify the GGUF file and create the Ollama model before starting the processing phase.
 
 ### Marker/Surya internal models
 
@@ -418,7 +422,7 @@ The worker includes adaptive parallelization to maximize GPU utilization (optimi
 
 | Variable                 | Description                                                                                      | Default   | Recommended Range |
 |:-------------------------|:-------------------------------------------------------------------------------------------------|:----------|:------------------|
-| `TOTAL_VRAM_GB`          | Total VRAM available on your GPU (used for auto-tuning worker counts).                           | `24`      | `8-80`            |
+| `VRAM_GB_TOTAL`          | Total VRAM available on your GPU (used for auto-tuning worker counts).                           | `24`      | `8-80`            |
 | `OLLAMA_CHUNK_SIZE`      | Characters per chunk for LLM processing. Smaller = more parallelism, larger = better context.    | `4000`    | `2000-8000`       |
 | `MARKER_VRAM_PER_WORKER` | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.               | `5`       | `3-6`             |
 | `OLLAMA_CONTEXT_LENGTH`  | Context length (tokens) per request. Used for auto-calculating `OLLAMA_NUM_PARALLEL`.            | `4096`    | `2048-32768`      |
@@ -461,7 +465,7 @@ When set to `auto` (default), the worker automatically optimizes parallelism bas
 - `ollama_chunk_workers` (maximize chunk parallelism, files processed sequentially)
 - **Best for**: Batch processing many small-to-medium PDFs
 
-*Note: All auto-calculations are bounded by available VRAM (TOTAL_VRAM_GB).*
+*Note: All auto-calculations are bounded by available VRAM (VRAM_GB_TOTAL).*
 
 #### Performance Examples
 
@@ -477,11 +481,11 @@ For specific hardware or workloads, you can override auto-tuning:
 
 ```bash
 # Example: 48GB VRAM GPU, medium LLM models - maximize parallelism
-TOTAL_VRAM_GB=48
+VRAM_GB_TOTAL=48
 OLLAMA_CONTEXT_LENGTH=8192
 
 # Example: 16GB VRAM GPU, small LLM models - conservative settings
-TOTAL_VRAM_GB=16
+VRAM_GB_TOTAL=16
 OLLAMA_BASE_VRAM_GB=4
 
 # Example: Disable LLM parallelization via "ollama_chunk_workers=1" in json input of serverless endpoint (troubleshooting)

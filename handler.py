@@ -85,12 +85,12 @@ def marker_worker_init() -> None:
     Models are loaded into VRAM and stored in process-local _MARKER_MODELS variable.
     """
     global _MARKER_MODELS
-    logger.info(f"Worker process {os.getpid()} initializing marker models...")
+    logger.info(f"Worker process with pid {os.getpid()} initializing marker models...")
     _MARKER_MODELS = create_model_dict()
 
     # Register cleanup on exit
     atexit.register(marker_worker_exit)
-    logger.info(f"Worker process {os.getpid()} ready")
+    logger.info(f"Worker process with pid {os.getpid()} ready")
 
 
 def marker_worker_exit() -> None:
@@ -591,47 +591,38 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("--- Starting Ollama for Post-processing ---")
 
         try:
-            # Restart Ollama server
-            # We recreate the worker instance with the same configuration
-            ollama_worker.start_server()
+            # Use OllamaWorker context manager to start and ensure the model
+            with ollama_worker:
+                logger.info(f"Post-processing {len(processed_files)} files with {ollama_settings.chunk_workers} chunk workers...")
 
-            # Note: Model should already be there from step 1, but ensure_model calls check_exists first,
-            # so it's inexpensive to call again to be sure.
-            ollama_worker.ensure_model()
-
-            logger.info(f"Post-processing {len(processed_files)} files sequentially with {ollama_settings.chunk_workers} chunk workers...")
-
-            # Process files sequentially, with parallel chunk processing within each file
-            for processed_file_path in processed_files:
-                ollama_worker.process_file(
-                    file_path=processed_file_path,
-                    prompt_template=ollama_settings.block_correction_prompt,
-                    max_chunk_workers=ollama_settings.chunk_workers
-                )
-
-                extracted_images = list_extracted_images_for_output_file(app_config, processed_file_path)
-                if not extracted_images:
-                    continue
-
-                image_descriptions = ollama_worker.describe_images(
-                    image_paths=extracted_images,
-                    prompt_template=ollama_settings.image_description_prompt,
-                    max_image_workers=ollama_settings.chunk_workers
-                )
-
-                inserted_descriptions = insert_image_descriptions_to_text_file(
-                    app_config=app_config,
-                    output_file_path=processed_file_path,
-                    image_descriptions=image_descriptions
-                )
-                if inserted_descriptions:
-                    logger.info(
-                        f"Inserted {len(image_descriptions)} image descriptions into {processed_file_path.name}"
+                # Process files sequentially, with parallel chunk processing within each file
+                for processed_file_path in processed_files:
+                    ollama_worker.process_file(
+                        file_path=processed_file_path,
+                        prompt_template=ollama_settings.block_correction_prompt,
+                        max_chunk_workers=ollama_settings.chunk_workers
                     )
 
-            # Cleanup
-            ollama_worker.unload_model()
-            ollama_worker.stop_server()
+                    extracted_images = list_extracted_images_for_output_file(app_config, processed_file_path)
+                    if not extracted_images:
+                        continue
+
+                    image_descriptions = ollama_worker.describe_images(
+                        image_paths=extracted_images,
+                        prompt_template=ollama_settings.image_description_prompt,
+                        max_image_workers=ollama_settings.chunk_workers
+                    )
+
+                    inserted_descriptions = insert_image_descriptions_to_text_file(
+                        app_config=app_config,
+                        output_file_path=processed_file_path,
+                        image_descriptions=image_descriptions
+                    )
+                    if inserted_descriptions:
+                        logger.info(
+                            f"Inserted {len(image_descriptions)} image descriptions into {processed_file_path.name}"
+                        )
+
             torch.cuda.empty_cache()
             log_vram_usage("Final")
 
