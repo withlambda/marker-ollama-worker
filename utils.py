@@ -13,18 +13,99 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+"""
+Utility functions and classes for the marker-ollama-worker.
+Includes environment configuration, resource management (VRAM),
+and path validation utilities.
+"""
+
+import logging
 import os
 import subprocess
-import logging
 from pathlib import Path
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Union
+
+from settings import GlobalConfig
 
 logger = logging.getLogger(__name__)
+
+def setup_config() -> GlobalConfig:
+    """
+    Validates and configures environment variables and ensures required directories exist.
+
+    This function:
+    1. Instantiates GlobalConfig, which performs Pydantic validation of environment variables.
+    2. Ensures that directories for Ollama models, logs, and Hugging Face cache exist.
+    3. Sets environment variables for downstream libraries (Ollama, HF).
+    4. Handles ownership and permission updates if running as root.
+    5. Validates additional model-related configuration for post-processing.
+
+    Returns:
+        GlobalConfig: The validated global configuration object.
+
+    Raises:
+        ValidationError: If environment variables fail Pydantic validation.
+        ValueError: If mandatory model configurations are missing when LLM is enabled.
+    """
+    try:
+        config = GlobalConfig()
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {e}")
+        raise
+
+    if config.use_postprocess_llm:
+        # Ensure directories exist
+        os.makedirs(config.ollama_models, exist_ok=True)
+        os.makedirs(config.ollama_log_dir, exist_ok=True)
+        os.makedirs(config.hf_home, exist_ok=True)
+        # Ownership/Permissions (if root)
+        # Note: This assumes Linux/Docker environment where UID 0 is root
+        # This is required to allow non-root user (appuser) to access mounted volumes
+        if os.getuid() == 0:
+            _update_ownership(
+                str(config.ollama_models),
+                str(config.ollama_log_dir),
+                str(config.hf_home)
+            )
+
+    return config
+
+def _update_ownership(*paths: str) -> None:
+    """
+    Updates ownership of the specified paths to appuser:appgroup if they exist.
+
+    This is used when running as root (e.g., in a container) to ensure the
+    non-root user can access mounted volumes.
+
+    Args:
+        *paths: Variable length list of directory/file paths to update.
+    """
+    try:
+        # Check if appuser exists
+        subprocess.run(["id", "appuser"], capture_output=True, check=True)
+
+        logger.info(f"Updating ownership of {', '.join(paths)} to appuser...")
+        for path in paths:
+            # chown -R --silent appuser:appgroup "$path" || true
+            subprocess.run(["chown", "-R", "--silent", "appuser:appgroup", path], check=False)
+
+            # Fallback check
+            # We use gosu to test write access as appuser
+            res = subprocess.run(["gosu", "appuser", "test", "-w", path], capture_output=True, check=False)
+            if res.returncode != 0:
+                logger.warning(f"Warning: Could not change ownership of {path}. Trying chmod as fallback...")
+                subprocess.run(["chmod", "-R", "775", path], stderr=subprocess.DEVNULL, check=False)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # appuser does not exist or id/gosu command not found
+        pass
 
 def get_vram_info() -> Dict[str, Any]:
     """
     Attempts to get VRAM information using nvidia-smi.
-    Returns a dictionary with 'total', 'used', and 'free' in MB.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing 'total', 'used', and 'free' VRAM in MB.
+                        Returns an empty dictionary if nvidia-smi is not available.
     """
     try:
         res = subprocess.check_output(
@@ -38,7 +119,12 @@ def get_vram_info() -> Dict[str, Any]:
         return {}
 
 def log_vram_usage(label: str = "") -> None:
-    """Logs the current VRAM usage."""
+    """
+    Logs the current VRAM usage to the logger.
+
+    Args:
+        label (str): An optional label to include in the log message.
+    """
     info = get_vram_info()
     if info:
         logger.info(f"VRAM Usage {f'({label})' if label else ''}: "
@@ -46,24 +132,56 @@ def log_vram_usage(label: str = "") -> None:
     else:
         logger.info(f"VRAM Usage {f'({label})' if label else ''}: nvidia-smi not available.")
 
-def check_is_dir(path: str) -> None:
-    """Checks if the given path is a directory. Raises NotADirectoryError if not."""
+def check_is_dir(path: Union[str, Path]) -> None:
+    """
+    Checks if the given path is a directory.
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Raises:
+        NotADirectoryError: If the path does not exist or is not a directory.
+    """
     if not os.path.isdir(path):
         raise NotADirectoryError(f"Path '{path}' is not a directory.")
 
-def check_is_not_file(path: str) -> None:
-    """Checks if the given path is not a file. Raises ValueError if it is a file."""
+def check_is_not_file(path: Union[str, Path]) -> None:
+    """
+    Checks if the given path is NOT a file.
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Raises:
+        ValueError: If the path is an existing file.
+    """
     if os.path.isfile(path):
         raise ValueError(f"Path '{path}' is a file.")
 
-def check_no_subdirs(path: str) -> None:
-    """Checks if the given directory contains no subdirectories (excluding hidden ones)."""
+def check_no_subdirs(path: Union[str, Path]) -> None:
+    """
+    Checks if the given directory contains no subdirectories (excluding hidden ones).
+
+    Args:
+        path (Union[str, Path]): Path to the directory to check.
+
+    Raises:
+        ValueError: If subdirectories are found.
+    """
     subdir_count = sum(1 for entry in os.scandir(path) if entry.is_dir() and not entry.name.startswith('.'))
     if subdir_count > 0:
         raise ValueError(f"Path '{path}' contains subdirectories.")
 
-def is_empty_dir(path: str) -> bool:
-    """Checks if the given path is an empty directory (excluding hidden files)."""
+def is_empty_dir(path: Union[str, Path]) -> bool:
+    """
+    Checks if the given path is an empty directory (excluding hidden files).
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Returns:
+        bool: True if empty, False otherwise.
+    """
     p = Path(path)
     if not p.is_dir():
         return False
@@ -72,8 +190,16 @@ def is_empty_dir(path: str) -> bool:
             return False
     return True
 
-def check_is_empty_dir(path: str) -> None:
-    """Checks if the given path is an empty directory if it exists."""
+def check_is_empty_dir(path: Union[str, Path]) -> None:
+    """
+    Checks if the given path is an empty directory if it exists.
+
+    Args:
+        path (Union[str, Path]): Path to check.
+
+    Raises:
+        ValueError: If the directory exists and is not empty.
+    """
     if os.path.exists(path) and not is_empty_dir(path):
         raise ValueError(f"Directory '{path}' is not empty.")
 

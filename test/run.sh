@@ -54,8 +54,8 @@ cp "${SCRIPT_DIR}"/*.txt \
   "${PARENT_OF_SCRIPT_DIR}/handler.py" \
   "${PARENT_OF_SCRIPT_DIR}/ollama_worker.py" \
   "${PARENT_OF_SCRIPT_DIR}/utils.py" \
+  "${PARENT_OF_SCRIPT_DIR}/settings.py" \
   "${PARENT_OF_SCRIPT_DIR}/block_correction_prompts.json" "${BUILD_TEST_DIR}"
-cp -r "${PARENT_OF_SCRIPT_DIR}/entrypoint" "${BUILD_TEST_DIR}"
 
 cd "${BUILD_TEST_DIR}" || exit 1
 

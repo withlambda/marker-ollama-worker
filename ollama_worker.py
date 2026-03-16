@@ -1,13 +1,22 @@
+"""
+Ollama worker for document post-processing.
+This module manages the lifecycle of the Ollama server, including starting,
+stopping, and ensuring required models are available. It provides functions
+for OCR error correction and image description generation.
+"""
 import os
 import subprocess
 import time
 import logging
 import signal
 import tempfile
+import random
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, TextIO, Tuple
 import ollama
+from settings import OllamaSettings
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,16 +31,47 @@ class OllamaWorker:
     - Process text chunks in parallel using the Ollama model for OCR correction.
     - Handle model unloading to free up VRAM for other tasks.
     """
-    def __init__(self) -> None:
-        """
-        Initializes the OllamaWorker with the host from OLLAMA_BASE_URL
-        and sets up the Ollama client.
-        """
-        self.host: str = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-        # Configure the ollama client to point to our local instance
-        self.client: ollama.Client = ollama.Client(host=self.host)
+    def __init__(
+        self,
+        settings: OllamaSettings,
+    ) -> None:
+        self.settings = settings
+
+        # Client
+        self.client: ollama.Client = ollama.Client(host=self.settings.host)
+
         self.log_file: Optional[TextIO] = None
         self.process: Optional[subprocess.Popen] = None
+        self._lock = threading.Lock()
+
+        logger.info(f"OllamaWorker initialized with host={self.settings.host}, model={self.settings.model}")
+
+    def __del__(self) -> None:
+        """
+        Ensures that the Ollama server is stopped and resources are released
+        when the worker object is destroyed.
+        """
+        self.stop_server()
+
+    def __enter__(self) -> 'OllamaWorker':
+        """
+        Context manager support: starts the server and ensures the model is ready.
+        """
+        try:
+            self.start_server()
+            self.ensure_model()
+        except Exception:
+            self.stop_server()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """
+        Context manager support: stops the server and unloads the model.
+        """
+        self.unload_model()
+        self.stop_server()
+
 
     def start_server(self) -> None:
         """
@@ -42,44 +82,58 @@ class OllamaWorker:
         Raises:
             RuntimeError: If the Ollama server fails to start or become responsive.
         """
-        if self.process is not None:
-            logger.info("Ollama server is already running.")
-            return
+        with self._lock:
+            if self.process is not None:
+                if self.process.poll() is None:
+                    logger.info("Ollama server is already running.")
+                    return
+                else:
+                    logger.warning("Ollama server process was found dead. Cleaning up before restart.")
+                    self.stop_server()
 
-        logger.info("Starting Ollama service...")
+            logger.info("Starting Ollama service...")
 
-        # Log environment info for debugging
-        self._log_env_info()
+            # Log environment info for debugging
+            self._log_env_info()
 
-        # Ensure OLLAMA_MODELS is set (usually handled by entrypoint scripts)
-        if "OLLAMA_MODELS" not in os.environ:
-             logger.warning("OLLAMA_MODELS environment variable not set.")
+            # Ensure OLLAMA_MODELS is set (handled by setup_config() in utils.py)
+            if not self.settings.models_dir:
+                 logger.warning("OLLAMA_MODELS environment variable not set and models_dir not provided.")
 
-        self.log_file = open("ollama.log", "w")
-        try:
-            # Prepare environment for ollama serve
-            env = os.environ.copy()
-            # Enable debug logging in ollama if requested
-            if os.environ.get("OLLAMA_DEBUG") == "1":
-                logger.info("Enabling OLLAMA_DEBUG=1")
-                env["OLLAMA_DEBUG"] = "1"
+            log_file_path = os.path.join(self.settings.log_dir, self.settings.log_file_name)
 
-            # Start ollama serve
-            self.process = subprocess.Popen(
-                ["ollama", "serve"],
-                stdout=self.log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                env=env
-            )
-            logger.info(f"OLLAMA PID: {self.process.pid}")
-            self._wait_for_ready()
-        except Exception as e:
-            logger.error(f"Failed to start Ollama: {e}")
-            self.stop_server()
-            raise
+            # Ensure the log directory exists if it's not the current directory
+            if self.settings.log_dir != ".":
+                os.makedirs(self.settings.log_dir, exist_ok=True)
 
-    def _log_env_info(self) -> None:
+            logger.info(f"Ollama server logs will be written to: {log_file_path}")
+
+            # Close existing log file if open to prevent file descriptor leak
+            if self.log_file:
+                try:
+                    self.log_file.close()
+                except Exception as e:
+                    logger.warning(f"Error closing previous log file: {e}")
+
+            self.log_file = open(log_file_path, "w")
+            try:
+                # Start ollama serve
+                self.process = subprocess.Popen(
+                    ["ollama", "serve"],
+                    stdout=self.log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    env=os.environ.copy(),
+                )
+                logger.info(f"OLLAMA PID: {self.process.pid}")
+                self._wait_for_ready()
+            except Exception as e:
+                logger.error(f"Failed to start Ollama: {e}")
+                self.stop_server()
+                raise
+
+    @staticmethod
+    def _log_env_info() -> None:
         """Logs environment information relevant to GPU and Ollama."""
         logger.info("--- Environment Info ---")
         try:
@@ -105,7 +159,13 @@ class OllamaWorker:
         except ImportError:
             logger.warning("Torch not available for GPU check.")
 
-        for var in ["CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "OLLAMA_MODELS", "OLLAMA_HOST"]:
+        for var in [
+            "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES",
+            "OLLAMA_MODELS", "OLLAMA_LOG_DIR", "OLLAMA_HOST",
+            "OLLAMA_NUM_PARALLEL", "OLLAMA_MAX_LOADED_MODELS",
+            "OLLAMA_FLASH_ATTENTION", "OLLAMA_KV_CACHE_TYPE",
+            "OLLAMA_MAX_QUEUE", "OLLAMA_KEEP_ALIVE"
+        ]:
             if var in os.environ:
                 logger.info(f"{var}: {os.environ[var]}")
 
@@ -118,36 +178,44 @@ class OllamaWorker:
         logger.info("------------------------")
 
     def stop_server(self) -> None:
-        """Stops the Ollama server and its process group."""
-        if self.process:
-            logger.info(f"Stopping Ollama service (PID: {self.process.pid})...")
-            try:
-                # Since we used start_new_session=True, we should kill the process group
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-
-                # Still call wait to cleanup the zombie process
-                self.process.wait(timeout=10)
-            except ProcessLookupError:
-                logger.debug("Ollama process already gone.")
-            except subprocess.TimeoutExpired:
-                logger.warning("Ollama process group did not terminate gracefully, killing...")
+        """
+        Stops the Ollama server and its process group.
+        Ensures resources (process, log file handle) are released.
+        """
+        with self._lock:
+            if self.process:
+                logger.info(f"Stopping Ollama service (PID: {self.process.pid})...")
                 try:
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                    self.process.wait()
+                    # Since we used start_new_session=True, we should kill the process group
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+
+                    # Still call wait to cleanup the zombie process
+                    self.process.wait(timeout=10)
+                except ProcessLookupError:
+                    logger.debug("Ollama process already gone.")
+                except subprocess.TimeoutExpired:
+                    logger.warning("Ollama process group did not terminate gracefully, killing...")
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                        self.process.wait()
+                    except Exception as e:
+                        logger.error(f"Failed to kill Ollama process group: {e}")
                 except Exception as e:
-                    logger.error(f"Failed to kill Ollama process group: {e}")
-            except Exception as e:
-                logger.error(f"Error while stopping Ollama: {e}")
-                # Fallback to simple terminate
-                self.process.terminate()
-                self.process.wait(timeout=5)
+                    logger.error(f"Error while stopping Ollama: {e}")
+                    # Fallback to simple terminate
+                    self.process.terminate()
+                    self.process.wait(timeout=5)
 
-            logger.info("Ollama service stopped.")
-            self.process = None
+                logger.info("Ollama service stopped.")
+                self.process = None
 
-        if self.log_file:
-            self.log_file.close()
-            self.log_file = None
+            if self.log_file:
+                try:
+                    self.log_file.close()
+                except Exception as e:
+                    logger.error(f"Error closing Ollama log file: {e}")
+                finally:
+                    self.log_file = None
 
     def _wait_for_ready(
         self,
@@ -163,51 +231,106 @@ class OllamaWorker:
             RuntimeError: If the Ollama server fails to start or become responsive within the timeout.
         """
         logger.info("Waiting for Ollama to start...")
+        last_error = "No error recorded"
         for i in range(max_retries):
             try:
                 # Simple health check using requests or client.list()
                 self.client.list()
                 logger.info("Ollama is up and running!")
                 return
-            except Exception:
-                pass
+            except Exception as e:
+                last_error = str(e)
 
             if self.process and self.process.poll() is not None:
-                raise RuntimeError("Ollama process exited unexpectedly.")
+                # Process died, maybe capture some stderr?
+                # We can't easily read from self.log_file while it's open for the process
+                raise RuntimeError(f"Ollama process (PID {self.process.pid}) exited unexpectedly with code {self.process.returncode}.")
 
-            logger.info(f"Waiting for Ollama... ({i+1}/{max_retries})")
+            logger.info(f"Waiting for Ollama... ({i+1}/{max_retries}) - Last error: {last_error}")
             time.sleep(2)
 
-        raise RuntimeError("Ollama failed to start within the timeout period.")
+        raise RuntimeError(f"Ollama failed to start within the timeout period ({max_retries * 2}s). Last error: {last_error}")
 
     def ensure_model(self) -> None:
         """
         Ensures the configured model exists in the Ollama instance.
 
-        If OLLAMA_MODEL is set, it checks if the model exists and pulls it if not.
-        If OLLAMA_MODEL is NOT set, it attempts to build a model from a local Hugging Face
-        model cache directory, as specified by other environment variables.
+        This method implements a resilient model discovery strategy:
+        1.  Determine the target model name (either from settings or derived from HF specs).
+        2.  Check if the model already exists in Ollama.
+        3.  If not found, attempt to pull it from the Ollama registry.
+        4.  If pull fails (e.g., private model, registry down), attempt to build it from
+            a local Hugging Face model cache (if configured).
 
         Raises:
-            RuntimeError: If pulling or creating the model fails.
+            RuntimeError: If the model cannot be found, pulled, or built.
         """
-        model_name = os.environ.get("OLLAMA_MODEL")
+        model_name = self.settings.model or self._get_ollama_model_name_from_hf_specification(
+            hf_model_name=self.settings.hf_model_name,
+            hf_model_quantization=self.settings.hf_model_quantization
+        )
 
-        if model_name:
-            # Case 1: Model Name specified - Check/Pull
-            if not self._check_model_exists(model_name):
-                logger.info(f"Model '{model_name}' not found. Pulling from registry...")
-                try:
-                    # Use the client to pull
-                    self.client.pull(model_name)
-                    logger.info(f"Successfully pulled model '{model_name}'")
-                except Exception as e:
-                    raise RuntimeError(f"Failed to pull model '{model_name}': {e}")
-            else:
-                logger.info(f"Model '{model_name}' found locally.")
-        else:
-            # Case 2: No OLLAMA_MODEL - Build from HF
-            self._build_from_hf()
+        if not model_name:
+             # This should only happen if both settings.model and hf specs are empty
+             # build_from_hf will catch this and report missing config
+             self._build_from_hf()
+             return
+
+        # Case 1: Check if already exists
+        if self._check_model_exists(model_name):
+            logger.info(f"Model '{model_name}' found locally in Ollama.")
+            if not self.settings.model:
+                self.settings.model = model_name
+            return
+
+        # Case 2: Attempt to Pull
+        logger.info(f"Model '{model_name}' not found. Attempting to pull from registry...")
+        try:
+            self.client.pull(model_name)
+            logger.info(f"Successfully pulled model '{model_name}'")
+            if not self.settings.model:
+                self.settings.model = model_name
+            return
+        except Exception as e:
+            logger.warning(f"Failed to pull model '{model_name}': {e}. "
+                         f"Falling back to local build if HF configuration is available.")
+
+        # Case 3: Fallback to Build from HF
+        try:
+            self._build_from_hf(desired_model_name=model_name)
+        except Exception as build_err:
+            logger.error(f"Failed to build model from HF: {build_err}")
+            raise RuntimeError(f"Could not ensure model '{model_name}': "
+                             f"Pull failed and Build failed.") from build_err
+
+        if not self.settings.model:
+            self.settings.model = model_name
+
+    @staticmethod
+    def _get_ollama_model_name_from_hf_specification(
+        hf_model_name: str,
+        hf_model_quantization: str
+    ) -> str:
+        """
+        Convert the Hugging Face model specification into an Ollama model name.
+
+        The method takes a Hugging Face model name and quantization specification,
+        then converts this information into the specific format required for Ollama
+        model names. To prevent namespace collisions, the full model path (including
+        namespace) is used to generate the model name.
+
+        :param hf_model_name: The name of the Hugging Face model. It can include a namespace or subpath
+                              separated by a forward slash (e.g., "namespace/model").
+        :param hf_model_quantization: The quantization level of the Hugging Face model, which must be
+                                       compatible with the Ollama format.
+        :return: A string representing the transformed Ollama model name formatted as
+                 "<namespace>-<model>-<quantization>" or "<model>-<quantization>" if no namespace.
+        """
+        # Replace '/' with '-' to include namespace and prevent collisions
+        # e.g., "Qwen/Qwen3-VL" -> "qwen-qwen3-vl-q4_k_m"
+        ollama_base_name = hf_model_name.replace('/', '-')
+
+        return (ollama_base_name + "-" + hf_model_quantization).lower()
 
     def _check_model_exists(
         self,
@@ -247,48 +370,59 @@ class OllamaWorker:
             names_lower = [n.lower() for n in names]
             return model_name_lower in names_lower or any(m.startswith(f"{model_name_lower}:") for m in names_lower)
         except Exception as e:
-            logger.debug(f"Error checking model existence: {e}")
+            logger.warning(f"Error checking model existence: {e}")
             return False
 
-    def _build_from_hf(self) -> None:
+    def _build_from_hf(self, desired_model_name: Optional[str] = None) -> None:
         """
         Builds an Ollama model from GGUF files found in a Hugging Face cache.
 
-        Uses HF_HOME, OLLAMA_HUGGING_FACE_MODEL_NAME, and OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION
-        environment variables to locate the model files and construct the Modelfile.
+        Uses hf_home, hf_model_name, and hf_model_quantization configuration to
+        locate the model files and construct the Modelfile.
+
+        Args:
+            desired_model_name (str, optional): The name to give to the created Ollama model.
+                                               If None, it uses the GGUF filename.
 
         Raises:
             FileNotFoundError: If the model directory, snapshots, or GGUF files are missing.
             RuntimeError: If the Ollama model creation fails.
         """
-        hf_home = os.environ.get("HF_HOME")
-        model_name = os.environ.get("OLLAMA_HUGGING_FACE_MODEL_NAME")
-        quantization = os.environ.get("OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION")
-
-        if not all([hf_home, model_name, quantization]):
+        if not all([
+            self.settings.hf_home,
+            self.settings.hf_model_name,
+            self.settings.hf_model_quantization
+        ]):
              logger.info("Skipping Ollama build: Missing HF configuration.")
              return
 
-        logger.info(f"Attempting to build Ollama model from HF: {model_name} ({quantization})")
+        logger.info(f"Attempting to build Ollama model from HF: {self.settings.hf_model_name} ({self.settings.hf_model_quantization})")
 
         # Construct path: models--<user>--<repo>
-        repo_dir_name = "models--" + model_name.replace("/", "--")
-        base_path = Path(hf_home) / "hub" / repo_dir_name
+        repo_dir_name = "models--" + self.settings.hf_model_name.replace("/", "--")
+        base_path = Path(self.settings.hf_home) / "hub" / repo_dir_name
 
         if not base_path.exists():
             raise FileNotFoundError(f"Hugging Face model directory not found: {base_path}")
 
-        # Find snapshot (refs/main or first dir)
-        refs_main = base_path / "refs" / "main"
-        if refs_main.exists():
-            ref = refs_main.read_text().strip()
-            snapshot_path = base_path / "snapshots" / ref
-        else:
-            # Fallback to first snapshot
+        # Find snapshot (refs/main or latest snapshot)
+        ref_path = base_path / "refs" / "main"
+        snapshot_path = None
+        if ref_path.exists():
+            try:
+                ref = ref_path.read_text().strip()
+                snapshot_path = base_path / "snapshots" / ref
+            except Exception as e:
+                logger.warning(f"Could not read refs/main: {e}")
+
+        if not snapshot_path or not snapshot_path.exists():
+            # Fallback: Find the latest snapshot by modification time
             snapshots_dir = base_path / "snapshots"
             if snapshots_dir.exists():
                 snapshots = [d for d in snapshots_dir.iterdir() if d.is_dir()]
                 if snapshots:
+                    # Sort by modification time, latest first
+                    snapshots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
                     snapshot_path = snapshots[0]
                 else:
                     raise FileNotFoundError(f"No snapshots found in {snapshots_dir}")
@@ -298,32 +432,55 @@ class OllamaWorker:
         logger.info(f"Using snapshot: {snapshot_path}")
 
         # Find GGUF file
-        # Equivalent to: find . -name "*quantization*.gguf"
-        gguf_files = list(snapshot_path.glob(f"*{quantization}*.gguf"))
+        # Use more specific pattern: *-quantization.gguf or quantization.gguf
+        quantization = self.settings.hf_model_quantization
+        gguf_files = list(snapshot_path.glob("*.gguf"))
+
+        # Filter to files that match the quantization pattern more precisely
+        matching_files = []
+        for f in gguf_files:
+            name_lower = f.stem.lower()
+            quant_lower = quantization.lower()
+            if name_lower.endswith(f"-{quant_lower}") or name_lower.endswith(f".{quant_lower}") or name_lower == quant_lower:
+                matching_files.append(f)
+
+        # Fallback to a broader match if strict matching finds nothing
+        if not matching_files:
+            matching_files = [f for f in gguf_files if quantization.lower() in f.stem.lower()]
 
         model_file = None
         adapter_file = None
 
-        for f in gguf_files:
-            if "mmproj" in f.name:
+        for f in matching_files:
+            if "mmproj" in f.name.lower():
                 adapter_file = f
             else:
-                model_file = f
+                if model_file is not None:
+                    logger.warning(
+                        f"Multiple GGUF model files found for quantization '{quantization}': "
+                        f"{model_file.name} and {f.name}. Using shortest filename."
+                    )
+                    if len(f.name) < len(model_file.name):
+                        model_file = f
+                else:
+                    model_file = f
 
         if not model_file:
-            raise FileNotFoundError(f"No GGUF file matching '{quantization}' found in {snapshot_path}")
+            raise FileNotFoundError(
+                f"No GGUF file matching quantization '{quantization}' found in {snapshot_path}. "
+                f"Available GGUF files: {[f.name for f in gguf_files]}"
+            )
 
-        # Set OLLAMA_MODEL env var for the rest of the process
-        # Ollama model names are typically lowercase.
-        final_model_name = model_file.stem.lower()
-        os.environ["OLLAMA_MODEL"] = final_model_name
-        logger.info(f"Resolved Ollama Model Name: {final_model_name}")
+        # Determine the model name in Ollama
+        final_model_name = desired_model_name or model_file.stem.lower()
+        self.settings.model = final_model_name
+        logger.info(f"Ollama Model Name will be: {final_model_name}")
 
         if self._check_model_exists(final_model_name):
             logger.info(f"Ollama model '{final_model_name}' already exists.")
             return
 
-        logger.info(f"Building Ollama model '{final_model_name}'...")
+        logger.info(f"Building Ollama model '{final_model_name}' from {model_file.name}...")
 
         # Prepare Modelfile content
         # Quoting paths in the Modelfile is recommended to avoid issues with special characters.
@@ -333,22 +490,20 @@ class OllamaWorker:
 
         # Use a temporary file for the Modelfile to ensure better compatibility with the Ollama CLI.
         # Some versions of the CLI have issues with reading from stdin (-f -).
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.Modelfile', delete=False) as tmp:
-            tmp.write(modelfile_content)
-            tmp_path = tmp.name
-
+        tmp_path = None
         try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.Modelfile', delete=False) as tmp:
+                tmp.write(modelfile_content)
+                tmp_path = Path(tmp.name)
+
             # Use subprocess to create the model, as some versions of the Python SDK
             # have issues with the 'modelfile' keyword argument.
-            # We ensure OLLAMA_HOST is set so it connects to the local server.
-            env = os.environ.copy()
-            env["OLLAMA_HOST"] = self.host
 
             logger.info(f"Creating model '{final_model_name}' using Ollama CLI and temporary Modelfile...")
             subprocess.run(
-                ["ollama", "create", final_model_name, "-f", tmp_path],
+                ["ollama", "create", final_model_name, "-f", str(tmp_path)],
                 check=True,
-                env=env,
+                env=os.environ.copy(),
                 capture_output=True
             )
             logger.info(f"Successfully created model '{final_model_name}'")
@@ -358,8 +513,8 @@ class OllamaWorker:
         except Exception as e:
             raise RuntimeError(f"Failed to create model '{final_model_name}': {e}")
         finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if tmp_path:
+                tmp_path.unlink(missing_ok=True)
 
     def _process_single_chunk(
         self,
@@ -368,7 +523,7 @@ class OllamaWorker:
         chunk_index: int
     ) -> str:
         """
-        Processes a single text chunk using the Ollama model.
+        Processes a single text chunk using the Ollama model with retry logic.
 
         Args:
             chunk (str): The text chunk to process
@@ -378,19 +533,61 @@ class OllamaWorker:
         Returns:
             str: The processed text chunk
         """
-        model = os.environ.get("OLLAMA_MODEL")
-        try:
-            response = self.client.generate(
-                model=model,
-                prompt=chunk,
-                system=system_prompt,
-                stream=False
-            )
+        for attempt in range(self.settings.max_retries + 1):
+            try:
+                response = self.client.generate(
+                    model=self.settings.model,
+                    prompt=chunk,
+                    system=system_prompt,
+                    stream=False,
+                )
+                return self._extract_response_text(response)
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_last_attempt = (attempt == self.settings.max_retries)
 
-            return self._extract_response_text(response)
-        except Exception as e:
-            logger.error(f"Exception processing chunk {chunk_index}: {e}")
-            return chunk  # Fallback to original
+                # Identify retryable errors
+                # "model runner has unexpectedly stopped" usually means OOM or crash of the backend
+                # "connection refused" means the server might be restarting or crashed
+                retryable = any(msg in error_msg for msg in [
+                    "model runner has unexpectedly stopped",
+                    "connection refused",
+                    "try again",
+                    "overloaded",
+                    "timeout",
+                    "503",
+                    "504"
+                ])
+
+                if retryable and not is_last_attempt:
+                    # Exponential backoff with jitter
+                    delay = (self.settings.retry_delay * (2 ** attempt)) + (random.random() * self.settings.retry_delay)
+                    logger.warning(
+                        f"Retryable error processing chunk {chunk_index} "
+                        f"(attempt {attempt + 1}/{self.settings.max_retries + 1}). "
+                        f"Retrying in {delay:.2f}s... Error: {e}"
+                    )
+
+                    # If it was a connection refused, check if server process is actually alive
+                    if "connection refused" in error_msg and self.process:
+                        if self.process.poll() is not None:
+                            logger.error(f"Ollama server process died (PID {self.process.pid}). "
+                                         f"Attempting to restart...")
+                            # start_server handles the lock and re-initialization
+                            try:
+                                self.start_server()
+                            except Exception as start_err:
+                                logger.error(f"Failed to restart Ollama server: {start_err}")
+
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"Fatal error processing chunk {chunk_index} after {attempt + 1} attempts: {e}")
+                    return chunk  # Fallback to original
+
+        # Safety fallback: should not be reached, but guards against implicit None
+        logger.warning(f"Chunk {chunk_index} processing loop exited unexpectedly. Returning original chunk.")
+        return chunk
 
     @staticmethod
     def _extract_response_text(response: object) -> str:
@@ -428,11 +625,10 @@ class OllamaWorker:
         Returns:
             str: The processed text
         """
-        model = os.environ.get("OLLAMA_MODEL")
-        if not model:
-            raise ValueError("OLLAMA_MODEL not set for processing")
+        if not self.settings.model:
+            raise ValueError("model not set for processing")
 
-        chunks = self._chunk_text(text)
+        chunks = self._chunk_text(text, self.settings.chunk_size)
 
         # Default prompt if none provided
         system_prompt = prompt_template if prompt_template else (
@@ -528,9 +724,8 @@ class OllamaWorker:
         Returns:
             Optional[str]: Description text, or None when generation fails.
         """
-        model = os.environ.get("OLLAMA_MODEL")
-        if not model:
-            raise ValueError("OLLAMA_MODEL not set for image description")
+        if not self.settings.model:
+            raise ValueError("model not set for image description")
 
         system_prompt = prompt_template if prompt_template else (
             "You are an expert document-vision assistant. "
@@ -541,11 +736,11 @@ class OllamaWorker:
 
         try:
             response = self.client.generate(
-                model=model,
+                model=self.settings.model,
                 prompt="Provide a precise and concise description of this image.",
                 system=system_prompt,
                 images=[str(image_path)],
-                stream=False
+                stream=False,
             )
             description = self._extract_response_text(response)
             if not description:
@@ -609,8 +804,8 @@ class OllamaWorker:
             if description
         ]
 
-    @staticmethod
     def _chunk_text(
+        self,
         text: str,
         chunk_size: Optional[int] = None
     ) -> List[str]:
@@ -620,13 +815,13 @@ class OllamaWorker:
 
         Args:
             text (str): The text to chunk
-            chunk_size (int): Maximum characters per chunk. If None, uses OLLAMA_CHUNK_SIZE env var.
+            chunk_size (int): Maximum characters per chunk. If None, uses self.settings.chunk_size.
 
         Returns:
             list: List of text chunks
         """
         if chunk_size is None:
-            chunk_size = int(os.environ.get("OLLAMA_CHUNK_SIZE", "4000"))
+            chunk_size = self.settings.chunk_size
 
         chunks = []
         start = 0
@@ -658,17 +853,16 @@ class OllamaWorker:
         Unloads the current model from VRAM by sending a generate request with keep_alive=0.
         This allows other processes (like marker) to utilize the VRAM.
         """
-        model = os.environ.get("OLLAMA_MODEL")
-        if not model:
+        if not self.settings.model:
             return
         try:
              # Use client.generate with keep_alive=0
              self.client.generate(
-                 model=model,
+                 model=self.settings.model,
                  prompt="",
                  keep_alive=0
              )
-             logger.info("Requested Ollama model unload.")
+             logger.info(f"Requested Ollama model unload for '{self.settings.model}'.")
         except Exception as e:
             logger.error(f"Error unloading model: {e}")
 

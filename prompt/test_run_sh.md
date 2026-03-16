@@ -8,7 +8,7 @@ This script automates the process of running local tests for the Dockerized Mark
     *   Removes `build/test` and its subdirectories.
     *   Creates new `build/test`, `test-data/input`, and `test-data/output` directories.
 2.  **Setup**:
-    *   Copies `Dockerfile`, `handler.py`, `entrypoint/` directory, and other files (`*.txt`, `*.py`, `*.env`) to `build/test`.
+    *   Copies `Dockerfile`, `handler.py`, and other files (`*.txt`, `*.py`, `*.env`) to `build/test`.
     *   Installs dependencies from `requirements-setup.txt`.
 3.  **Data Generation**:
     *   Calls `python3 create-sample-pdfs.py` to generate `test1.pdf` and `test2.pdf`.

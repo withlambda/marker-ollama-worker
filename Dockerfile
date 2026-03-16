@@ -22,7 +22,7 @@ ARG DOWNLOAD_MARKER_MODELS="false"
 ARG BASE_IMAGE=pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime
 
 # 2. LOAD OLLAMA IMAGE
-FROM ollama/ollama:${OLLAMA_VERSION} as ollama-source
+FROM ollama/ollama:${OLLAMA_VERSION} AS ollama-source
 
 # 3. BASE IMAGE
 FROM ${BASE_IMAGE}
@@ -69,13 +69,14 @@ RUN mkdir -p ${XDG_CACHE_HOME} \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-COPY *.py block_correction_prompts.json entrypoint/ ./
+COPY *.py block_correction_prompts.json ./
 
 # 7. Create Non-Root User (UID 1000) with the name appuser
 # Ensure appuser owns the app and cache
 RUN	groupadd -r appgroup && useradd -r -g appgroup -u 1000 -m -d /home/appuser appuser && \
-    chown -R appuser:appgroup /app /home/appuser && \
-    chmod +x entrypoint.sh
+    chown -R appuser:appgroup /app /home/appuser
+
+ENV HANDLER_FILE_NAME="handler.py"
 
 # 8. START COMMAND
-CMD [ "./entrypoint.sh" ]
+CMD python3 -u  "${HANDLER_FILE_NAME}"

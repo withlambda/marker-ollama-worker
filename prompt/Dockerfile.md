@@ -41,12 +41,11 @@ This Dockerfile defines the environment for the `marker-ollama-worker`. It combi
     *   Downloads Marker fonts (`marker.util.download_font`).
     *   Conditionally downloads Marker models if `DOWNLOAD_MARKER_MODELS` is true.
     *   Purges build dependencies (`gcc`, `python3-dev`) and cleans up `apt` lists.
-5.  **Copy Application Code**: Copies `*.py`, `block_correction_prompts.json`, and `entrypoint/` contents to `/app`.
+5.  **Copy Application Code**: Copies `*.py` and `block_correction_prompts.json` to `/app`.
 6.  **Create Non-Root User**:
     *   Creates `appuser` (UID 1000) and `appgroup`.
     *   Sets ownership of `/app` and `/home/appuser` to `appuser:appgroup`.
-    *   Makes `entrypoint.sh` executable.
-7.  **Start Command**: Sets `CMD [ "./entrypoint.sh" ]`.
+7.  **Start Command**: Sets `CMD [ "python3", "-u", "handler.py" ]`.
 
 ## Logic
 *   The Dockerfile ensures a consistent environment for running Marker and Ollama.

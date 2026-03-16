@@ -12,14 +12,18 @@ The main class for interacting with Ollama.
 
 ##### Methods
 
-*   `__init__(self) -> None`:
-    Initializes the Ollama client and process state. Configures the host from `OLLAMA_BASE_URL`.
+*   `__init__(self, settings: Optional[OllamaSettings] = None, **kwargs) -> None`:
+    Initializes the Ollama client and worker configuration.
+    - If `settings` is provided, it uses the `OllamaSettings` object.
+    - Otherwise, it creates an `OllamaSettings` object from the provided `kwargs` (which automatically loads from environment variables for any missing keys).
+    - Stores the configuration in `self.settings`.
+    - Initializes the `ollama.Client` with `host` from settings.
 
 *   `start_server(self) -> None`:
-    Starts the Ollama server (`ollama serve`) in the background with `start_new_session=True`. Redirects output to `ollama.log`. Logs environment and GPU information (via `_log_env_info`) before starting. Supports `OLLAMA_DEBUG=1` if set in environment. Waits for the server to be ready.
+    Starts the Ollama server (`ollama serve`) in the background. Injects instance configuration variables (prefixed with `OLLAMA_`) into the subprocess environment. Redirects output to `ollama.log` in the configured `log_dir`. Logs environment information (via `_log_env_info`) before starting. Waits for the server to be ready.
 
 *   `_log_env_info(self) -> None`:
-    Internal helper to log CUDA availability, GPU device name, VRAM, and relevant environment variables (`CUDA_VISIBLE_DEVICES`, `OLLAMA_MODELS`, etc.). Runs `nvidia-smi -L` to verify GPU status.
+    Internal helper to log CUDA availability, GPU device name, VRAM, and relevant environment variables (`CUDA_VISIBLE_DEVICES`, `OLLAMA_MODELS`, `OLLAMA_LOG_DIR`, etc.). Runs `nvidia-smi -L` to verify GPU status.
 
 *   `stop_server(self) -> None`:
     Stops the Ollama server and its entire process group using `os.killpg` and `signal.SIGTERM`. Falls back to `SIGKILL` if necessary. Ensures no zombie processes remain.
@@ -49,10 +53,16 @@ The main class for interacting with Ollama.
     3. Reassembles the processed chunks.
 
 *   `_process_single_chunk(self, chunk: str, system_prompt: str, chunk_index: int) -> str`:
-    Sends a single chunk to Ollama using `client.generate`. Retries once on failure.
+    Sends a single chunk to Ollama using `client.generate`. Passes `num_ctx` via `options`. Retries once on failure.
 
 *   `process_file(self, file_path: Path, prompt_template: Optional[str] = None, max_chunk_workers: Optional[int] = None) -> bool`:
     Reads a file, processes its content using `process_text`, and overwrites the file with the result.
+
+*   `_describe_single_image(self, image_path: Path, prompt_template: Optional[str], image_index: int) -> Optional[str]`:
+    Generates a description for a single image using Ollama. Passes `num_ctx` via `options`.
+
+*   `describe_images(self, image_paths: List[Path], prompt_template: Optional[str], max_image_workers: int) -> List[Tuple[Path, str]]`:
+    Generates descriptions for multiple images in parallel using `ThreadPoolExecutor`.
 
 *   `unload_model(self) -> None`:
     Unloads the model from VRAM by calling `client.generate` with `keep_alive=0`.

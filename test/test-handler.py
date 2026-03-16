@@ -17,6 +17,7 @@ import sys
 import os
 import json
 import time
+from pathlib import Path
 
 # Add the root directory to sys.path to import handler
 sys.path.append("/")
@@ -70,9 +71,9 @@ def test_handler() -> None:
         print("\n--- Handler Result ---")
         print(json.dumps(result, indent=2))
 
-        storage_bucket_path = os.environ.get('VOLUME_ROOT_MOUNT_PATH')
+        storage_bucket_path = Path(os.environ.get('VOLUME_ROOT_MOUNT_PATH', ""))
 
-        input_path=f"{storage_bucket_path}/{input_dir}"
+        input_path = storage_bucket_path / input_dir
 
         if result.get("status") == "completed" \
             and result.get("message") == f"All input files of {input_path} processed.":

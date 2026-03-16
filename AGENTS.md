@@ -107,6 +107,35 @@ When the user issues the command `/update-readme`, the agent must:
     - How to test the code.
     - Any other important information for using the repository.
 
+### `/review-all`
+When the user issues the command `/review-all`, the agent must:
+1.  Execute a comprehensive project audit, code review, and implementation cycle.
+2.  **Perform comprehensive code review**:
+    -   Analyze all source code files in the project (Python, shell scripts, Dockerfiles, YAML, etc.)
+    -   Identify bugs, security vulnerabilities, performance issues, code quality problems, and potential improvements
+    -   Review architecture, design patterns, error handling, resource management, and best practices
+    -   Check for code smells, anti-patterns, and maintainability issues
+3.  **Directly implement all suggested improvements**:
+    -   **IMPORTANT**: The agent MUST NOT just list suggestions - it must implement all identified fixes and improvements
+    -   Apply bug fixes, security patches, and performance optimizations
+    -   Refactor code to improve quality, readability, and maintainability
+    -   Update patterns and practices to follow modern standards
+    -   Fix any identified issues with error handling, logging, or resource management
+4.  **Update all related documentation**:
+    -   `/update-src-docs`: Synchronize inline documentation (docstrings, comments) with updated code logic
+    -   `/add-src-docs`: Ensure all new or modified functions, classes, and modules have complete documentation
+    -   Update test files to match any changes in function signatures or behavior
+    -   Update configuration documentation (e.g., `prompt/settings.md`) if settings changed
+5.  **Update project documentation**:
+    -   `/update-readme`: Ensure README.md reflects all implemented changes, new features, or configuration options
+    -   Update any relevant sections (usage, configuration, environment variables, troubleshooting)
+6.  **Verification**:
+    -   Ensure all changes are cohesive and internally consistent
+    -   Verify that no documentation contradicts the updated source code
+    -   Confirm that all fixes maintain backward compatibility unless explicitly intended otherwise
+
+**Key principle**: This command performs a complete review-and-implement cycle, not just a review-and-report cycle. All identified improvements must be implemented directly.
+
 ## License
 
 [GNU General Public License v3.0](LICENSE)
