@@ -58,19 +58,13 @@ If you suspect Ollama is running on RAM (CPU) instead of VRAM (GPU), check the f
 
 ### Troubleshooting Ollama 500 Errors / Runner Crashes
 
-If ollama returns HTTP 500 responses and the `ollama.log` shows a `GGML_ASSERT` failure like
+Ollama has problems with certain vision-enabled models when they
+were built from GGUF files. The Ollama server answers with 500 status code responses.
+To fix this, try to create the model from Safetensors weights in case
+you have access to them.
+The specific error appears also in the Ollama server logs shows a `GGML_ASSERT` failure like
 `(n_outputs_prev + n_outputs)*n_embd <= (int64_t) embd_size` followed by `SIGABRT` and
-`llama runner terminated` with `exit status 2`, the root cause is an embedding buffer overflow
-in the llama runner when `num_parallel > 1`.
-
-Starting with ollama **0.18.0**, the context length (`num_ctx`) must be explicitly passed as a
-runtime option in every `generate()` API call and/or baked into the Modelfile via
-`PARAMETER num_ctx`. The worker now does both automatically using the value from
-`OLLAMA_CONTEXT_LENGTH` (default `4096`). If you still encounter this crash:
-
-1.  **Reduce `OLLAMA_CONTEXT_LENGTH`**: A smaller context (e.g., `2048`) lowers per-slot memory and avoids the buffer overflow.
-2.  **Reduce `OLLAMA_NUM_PARALLEL`**: Fewer parallel slots reduce total embedding buffer requirements. Set to `1` to disable parallelism entirely.
-3.  **Check `ollama.log`**: Look for the `GGML_ASSERT` line to confirm this is the issue.
+`llama runner terminated` with `exit status 2`.
 
 ## Prerequisites
 

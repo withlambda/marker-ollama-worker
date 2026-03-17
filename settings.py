@@ -274,16 +274,23 @@ class OllamaSettings(BaseSettings):
             context_vram_gb = app_config.vram_gb_per_token_factor * self.context_length
             self.num_parallel = 1 if available_vram_gb <= 0 else max(1, int(available_vram_gb // context_vram_gb))
             logger.info(f"Calculated the following optimal number of parallel requests for the Ollama server, "
-                        "based on VRAM/Context calculation: "
-                        f"ollama_num_parallel={self.num_parallel}")
+                        f"based on VRAM/Context calculation, ollama_num_parallel={self.num_parallel}")
+            logger.info(f"For the calculation of the optimal number of parallel requests,"
+                        f"the following VRAM/Context factors were used:"
+                        f"vram_gb_total={app_config.vram_gb_total},"
+                        f"vram_gb_reserve={app_config.vram_gb_reserve},"
+                        f"vram_gb_per_token_factor={app_config.vram_gb_per_token_factor},"
+                        f"ollama_vram_gb_model={self.vram_gb_model}"
+                        f"ollama_context_length={self.context_length},"
+                        f"available_vram_gb={available_vram_gb} (vram_gb_total - vram_gb_reserve - ollama_vram_gb_model),"
+                        f"context_vram_gb={context_vram_gb} (ollama_per_token_factor * ollama_context_length)"
+                        f"ollama_num_parallel={self.num_parallel} (available_vram_gb // context_vram_gb)"
+                        )
 
-        # Cap chunk_workers to num_parallel to avoid overwhelming the Ollama server
-        # with more concurrent requests than it can handle, which causes
-        # "model runner has unexpectedly stopped" crashes on resource-limited environments.
-        if self.chunk_workers > self.num_parallel:
-            logger.info(f"Capping chunk_workers from {self.chunk_workers} to {self.num_parallel} "
-                        f"(matching ollama_num_parallel) to prevent server overload.")
-            self.chunk_workers = self.num_parallel
+        else:
+            logger.info(f"Using provided number of parallel requests for the Ollama server, "
+                        f"ollama_num_parallel={self.num_parallel}"
+                        )
 
         # determine the block correction prompt
         if not self.block_correction_prompt:

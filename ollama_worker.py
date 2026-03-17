@@ -4,18 +4,20 @@ This module manages the lifecycle of the Ollama server, including starting,
 stopping, and ensuring required models are available. It provides functions
 for OCR error correction and image description generation.
 """
-import os
-import subprocess
-import time
 import logging
-import signal
-import tempfile
+import os
 import random
+import signal
+import subprocess
+import tempfile
 import threading
-from pathlib import Path
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional, List, TextIO, Tuple
+
 import ollama
+
 from settings import OllamaSettings
 
 # Configure logging
@@ -366,41 +368,36 @@ class OllamaWorker:
             hf_model_quantization=self.settings.hf_model_quantization
         )
 
-        if not model_name:
-             # This should only happen if both settings.model and hf specs are empty
-             # build_from_hf will catch this and report missing config
-             self._build_from_hf()
-             return
+        if not self.settings.model:
+            self.settings.model = model_name
 
         # Case 1: Check if already exists
         if self._check_model_exists(model_name):
             logger.info(f"Model '{model_name}' found locally in Ollama.")
-            if not self.settings.model:
-                self.settings.model = model_name
             return
+        else:
+            logger.warning(f"Model '{model_name}' not found locally in Ollama."
+                        f"Attempting to build from Hugging Face cache if available.")
 
-        # Case 2: Attempt to Pull
-        logger.info(f"Model '{model_name}' not found. Attempting to pull from registry...")
+        # Case 2: Build from HF
+        try:
+            self._build_from_hf()
+            return
+        except Exception as build_err:
+            logger.warning(f"Failed to build model from HF: {build_err}")
+
+        # Case 3: Attempt to Pull
+        logger.info(f"Attempting to pull from registry...")
         try:
             self.client.pull(model_name)
             logger.info(f"Successfully pulled model '{model_name}'")
-            if not self.settings.model:
-                self.settings.model = model_name
             return
         except Exception as e:
-            logger.warning(f"Failed to pull model '{model_name}': {e}. "
-                         f"Falling back to local build if HF configuration is available.")
-
-        # Case 3: Fallback to Build from HF
-        try:
-            self._build_from_hf(desired_model_name=model_name)
-        except Exception as build_err:
-            logger.error(f"Failed to build model from HF: {build_err}")
-            raise RuntimeError(f"Could not ensure model '{model_name}': "
-                             f"Pull failed and Build failed.") from build_err
-
-        if not self.settings.model:
-            self.settings.model = model_name
+            logger.warning(f"Failed to pull model '{model_name}': {e}. ")
+            error_msg: str = (f"All attempts to build model '{model_name}' failed. "
+                              f"Exit.")
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
 
     @staticmethod
     def _get_ollama_model_name_from_hf_specification(
@@ -469,16 +466,12 @@ class OllamaWorker:
             logger.warning(f"Error checking model existence: {e}")
             return False
 
-    def _build_from_hf(self, desired_model_name: Optional[str] = None) -> None:
+    def _build_from_hf(self) -> None:
         """
         Builds an Ollama model from GGUF files found in a Hugging Face cache.
 
         Uses hf_home, hf_model_name, and hf_model_quantization configuration to
         locate the model files and construct the Modelfile.
-
-        Args:
-            desired_model_name (str, optional): The name to give to the created Ollama model.
-                                               If None, it uses the GGUF filename.
 
         Raises:
             FileNotFoundError: If the model directory, snapshots, or GGUF files are missing.
@@ -492,6 +485,17 @@ class OllamaWorker:
              logger.info("Skipping Ollama build: Missing HF configuration.")
              return
 
+        model_name: str = self._get_ollama_model_name_from_hf_specification(
+            hf_model_name=self.settings.hf_model_name,
+            hf_model_quantization=self.settings.hf_model_quantization
+        )
+
+        if self._check_model_exists(model_name):
+            logger.info(f"Ollama model '{model_name}' already exists.")
+            return
+
+        self.settings.model = model_name
+
         logger.info(f"Attempting to build Ollama model from HF: {self.settings.hf_model_name} ({self.settings.hf_model_quantization})")
 
         # Construct path: models--<user>--<repo>
@@ -501,88 +505,43 @@ class OllamaWorker:
         if not base_path.exists():
             raise FileNotFoundError(f"Hugging Face model directory not found: {base_path}")
 
-        # Find snapshot (refs/main or latest snapshot)
-        ref_path = base_path / "refs" / "main"
-        snapshot_path = None
-        if ref_path.exists():
-            try:
-                ref = ref_path.read_text().strip()
-                snapshot_path = base_path / "snapshots" / ref
-            except Exception as e:
-                logger.warning(f"Could not read refs/main: {e}")
-
-        if not snapshot_path or not snapshot_path.exists():
-            # Fallback: Find the latest snapshot by modification time
-            snapshots_dir = base_path / "snapshots"
-            if snapshots_dir.exists():
-                snapshots = [d for d in snapshots_dir.iterdir() if d.is_dir()]
-                if snapshots:
-                    # Sort by modification time, latest first
-                    snapshots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
-                    snapshot_path = snapshots[0]
-                else:
-                    raise FileNotFoundError(f"No snapshots found in {snapshots_dir}")
-            else:
-                 raise FileNotFoundError(f"Snapshots directory not found in {base_path}")
+        snapshot_path = self._get_snapshot_path(base_path)
 
         logger.info(f"Using snapshot: {snapshot_path}")
 
         # Find GGUF file
         # Use more specific pattern: *-quantization.gguf or quantization.gguf
-        quantization = self.settings.hf_model_quantization
+        quantization_lower = self.settings.hf_model_quantization.lower()
         gguf_files = list(snapshot_path.glob("*.gguf"))
+        safetensors_files = list(snapshot_path.glob("*.safetensors"))
 
-        # Filter to files that match the quantization pattern more precisely
-        matching_files = []
-        for f in gguf_files:
-            name_lower = f.stem.lower()
-            quant_lower = quantization.lower()
-            if name_lower.endswith(f"-{quant_lower}") or name_lower.endswith(f".{quant_lower}") or name_lower == quant_lower:
-                matching_files.append(f)
+        do_create_from_gguf = len(gguf_files) > 0
+        do_create_from_safetensors = len(safetensors_files) > 0
 
-        # Fallback to a broader match if strict matching finds nothing
-        if not matching_files:
-            matching_files = [f for f in gguf_files if quantization.lower() in f.stem.lower()]
+        modelfile_content: str = ""
 
-        model_file = None
-        adapter_file = None
-
-        for f in matching_files:
-            if "mmproj" in f.name.lower():
-                adapter_file = f
-            else:
-                if model_file is not None:
-                    logger.warning(
-                        f"Multiple GGUF model files found for quantization '{quantization}': "
-                        f"{model_file.name} and {f.name}. Using shortest filename."
-                    )
-                    if len(f.name) < len(model_file.name):
-                        model_file = f
-                else:
-                    model_file = f
-
-        if not model_file:
-            raise FileNotFoundError(
-                f"No GGUF file matching quantization '{quantization}' found in {snapshot_path}. "
-                f"Available GGUF files: {[f.name for f in gguf_files]}"
+        if do_create_from_gguf:
+            modelfile_content = self._model_file_content_for_gguf(
+                gguf_files=gguf_files,
+                quantization_lower=quantization_lower,
+                context_length=self.settings.context_length
             )
+        elif do_create_from_safetensors:
+            modelfile_content = self._model_file_content_for_safetensors(
+                snapshot_path=snapshot_path
+            )
+        else:
+            raise RuntimeError(f"No GGUF or safetensors files found in {snapshot_path}")
 
-        # Determine the model name in Ollama
-        final_model_name = desired_model_name or model_file.stem.lower()
-        self.settings.model = final_model_name
-        logger.info(f"Ollama Model Name will be: {final_model_name}")
-
-        if self._check_model_exists(final_model_name):
-            logger.info(f"Ollama model '{final_model_name}' already exists.")
-            return
-
-        logger.info(f"Building Ollama model '{final_model_name}' from {model_file.name}...")
-
-        # Prepare Modelfile content
-        # Quoting paths in the Modelfile is recommended to avoid issues with special characters.
-        modelfile_content = f'FROM "{model_file.absolute()}"\n'
-        if adapter_file:
-            modelfile_content += f'ADAPTER "{adapter_file.absolute()}"\n'
+        logger.info(
+            "".join(
+                filter(lambda x: x is not None, [
+                    f"Building Ollama model '{model_name}' from ",
+                    "GGUF based model" if do_create_from_gguf else None,
+                    "Safetensors weights" if do_create_from_safetensors else None,
+                ])
+            )
+        )
 
         # Set num_ctx in the Modelfile to ensure the context length is consistently
         # applied. This prevents the GGML_ASSERT embedding buffer overflow that occurs
@@ -601,22 +560,176 @@ class OllamaWorker:
             # Use subprocess to create the model, as some versions of the Python SDK
             # have issues with the 'modelfile' keyword argument.
 
-            logger.info(f"Creating model '{final_model_name}' using Ollama CLI and temporary Modelfile...")
+            ollama_create_cmd_args = [
+                "ollama",
+                "create",
+                model_name,
+                "-f",
+                str(tmp_path),
+            ]
+
+            ollama_create_cmd_args += [f"--quantize {quantization_lower}"] if (
+                do_create_from_safetensors and quantization_lower in ["q4_k_s", "q4_k_m", "q8_0"]
+            ) else []
+
+            logger.info(f"Creating model '{model_name}' using Ollama CLI and temporary Modelfile...")
             subprocess.run(
-                ["ollama", "create", final_model_name, "-f", str(tmp_path)],
+                ollama_create_cmd_args,
                 check=True,
                 env=os.environ.copy(),
                 capture_output=True
             )
-            logger.info(f"Successfully created model '{final_model_name}'")
+            logger.info(f"Successfully created model '{model_name}'")
         except subprocess.CalledProcessError as e:
             error_detail = e.stderr.decode().strip() if e.stderr else str(e)
-            raise RuntimeError(f"Failed to create model '{final_model_name}' via CLI: {error_detail}")
+            raise RuntimeError(f"Failed to create model '{model_name}' via CLI: {error_detail}")
         except Exception as e:
-            raise RuntimeError(f"Failed to create model '{final_model_name}': {e}")
+            raise RuntimeError(f"Failed to create model '{model_name}': {e}")
         finally:
             if tmp_path:
                 tmp_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _model_file_content_for_gguf(
+        gguf_files: List[Path],
+        quantization_lower: str,
+        context_length: Optional[int]
+    ) -> str:
+        """
+        Constructs the content of a Modelfile for the GGUF format by determining the appropriate
+        model and adapter files based on quantization criteria and other parameters.
+
+        :staticmethod:
+
+        :param gguf_files: A list of available GGUF files to inspect for matching model
+                           and adapter files.
+        :type gguf_files: List[Path]
+
+        :param quantization_lower: The quantization strategy string (in lowercase) to match
+                                   against the GGUF filenames.
+        :type quantization_lower: str
+
+        :param context_length: Optional context length parameter that will be included as a
+                               Modelfile parameter if provided.
+        :type context_length: Optional[int]
+
+        :return: String content of the constructed Modelfile including the path to the determined
+                 model file, adapter file (if any), and context length setting (if specified).
+        :rtype: str
+        """
+        # Filter to files that match the quantization pattern more precisely
+        matching_files = []
+        for f in gguf_files:
+            file_name_lower = f.stem.lower()
+            if (
+                file_name_lower.endswith(f"-{quantization_lower}") or
+                file_name_lower.endswith(f".{quantization_lower}") or
+                file_name_lower == quantization_lower
+            ):
+                matching_files.append(f)
+
+        # Fallback to a broader match if strict matching finds nothing
+        if not matching_files:
+            matching_files = [f for f in gguf_files if quantization_lower in f.stem.lower()]
+
+        model_file = None
+        adapter_file = None
+
+        for f in matching_files:
+            if "mmproj" in f.name.lower():
+                adapter_file = f
+            else:
+                if model_file is not None:
+                    logger.warning(
+                        f"Multiple GGUF model files found for quantization '{quantization_lower}': "
+                        f"{model_file.name} and {f.name}. Using shortest filename."
+                    )
+                    if len(f.name) < len(model_file.name):
+                        model_file = f
+                else:
+                    model_file = f
+
+        if not model_file:
+            raise FileNotFoundError(
+                f"No GGUF file matching quantization '{quantization_lower}' found."
+                f"Available GGUF files: {[f.name for f in gguf_files]}"
+            )
+
+            # Prepare Modelfile content
+        # Quoting paths in the Modelfile is recommended to avoid issues with special characters.
+        modelfile_content = f'FROM "{model_file.absolute()}"\n'
+        if adapter_file:
+            modelfile_content += f'ADAPTER "{adapter_file.absolute()}"\n'
+
+        # Set num_ctx in the Modelfile to ensure the context length is consistently
+        # applied. This prevents the GGML_ASSERT embedding buffer overflow that occurs
+        # in ollama >=0.18.0 when num_parallel > 1 and the model's default context
+        # size causes the output embedding buffer to be undersized.
+        modelfile_content += f'PARAMETER num_ctx {context_length}\n' if context_length else ""
+
+        return modelfile_content
+
+    @staticmethod
+    def _model_file_content_for_safetensors(
+        snapshot_path: Path
+    ) -> str:
+        """
+        Constructs the content for a file in the `safetensors` format, pointing to the absolute
+        path of the provided snapshot directory. This method generates a formatted string
+        suitable for specifying the location of the snapshot.
+
+        :param snapshot_path: Path to the snapshot directory. The provided path must be of type
+            `Path` and represent a valid file system location.
+        :type snapshot_path: Path
+        :return: A string formatted to indicate the location of the snapshot directory in absolute
+            path form.
+        :rtype: str
+        """
+        return f'FROM "{snapshot_path.absolute()}"\n'
+
+    @staticmethod
+    def _get_snapshot_path(
+        base_path: Path
+    ) -> Path:
+        """
+        Determines and returns the correct snapshot path based on the provided base path. It first attempts
+        to read the reference path from "refs/main". If this is not available or invalid, as a fallback,
+        it finds the most recent snapshot directory in the "snapshots" folder based on the modification time.
+
+        :param base_path: Path object representing the base directory containing the "refs" and "snapshots"
+            subdirectories.
+        :type base_path: Path
+        :return: Path object pointing to the determined snapshot directory.
+        :rtype: Path
+        :raises FileNotFoundError: If the "refs/main" file is invalid or the "snapshots" directory does not
+            exist or contain any valid snapshot directories.
+        """
+        ref_path = base_path / "refs" / "main"
+        snapshots_dir = base_path / "snapshots"
+
+        snapshot_path_: Optional[Path] = None
+        if ref_path.exists():
+            try:
+                ref = ref_path.read_text().strip()
+                snapshot_path_ = snapshots_dir / ref
+            except Exception as e:
+                logger.warning(f"Could not read refs/main: {e}")
+
+        if not snapshot_path_ or not snapshot_path_.exists():
+            # Fallback: Find the latest snapshot by modification time
+            if snapshots_dir.exists():
+                snapshots = [d for d in snapshots_dir.iterdir() if d.is_dir()]
+                if snapshots:
+                    # Sort by modification time, latest first
+                    snapshots.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    return snapshots[0]
+                else:
+                    raise FileNotFoundError(f"No snapshots found in {snapshots_dir}")
+            else:
+                raise FileNotFoundError(f"Snapshots directory not found in {base_path}")
+        else:
+            return snapshot_path_
+
 
     def _process_single_chunk(
         self,
