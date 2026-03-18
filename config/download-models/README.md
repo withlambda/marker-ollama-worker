@@ -15,7 +15,8 @@ The primary purpose of the code in this directory is to automate the downloading
     *   `hf_download`: Wraps the `hf download` command.
     *   `process_list_file`: Reads a file line by line and executes a specified command for each item.
 *   **`huggingface-hub.dockerfile`**: A Dockerfile that defines a lightweight Python image with the `huggingface_hub` library installed. It sets up the environment to run the download script.
-*   **`download-models-from-hf.sh`**: The script executed inside the Docker container. It loads `functions.sh` and calls `process_list_file` to download the models listed in `marker-models.txt` using the `hf_download` function.
+*   **`vllm-models.txt`**: A text file listing the Hugging Face model repositories for the vLLM server (e.g., multimodal LLM weights).
+*   **`download-models-from-hf.sh`**: The script executed inside the Docker container. It loads `functions.sh` and calls `process_list_file` to download the models listed in `marker-models.txt` and `vllm-models.txt` using the `hf_download` function.
 *   **`exec-model-download.sh`**: The main entry point script for the user.
     *   Builds the Docker image defined in `huggingface-hub.dockerfile`.
     *   Runs the Docker container, mounting a local directory (`../../models/huggingface`) to the container's cache directory (`/app/cache/huggingface`).
@@ -37,7 +38,7 @@ cd config/download-models
 This will:
 1.  Build the `hf_hub` Docker image.
 2.  Run the container.
-3.  Download the models listed in `marker-models.txt` to the `../../models/huggingface` directory on your host machine.
+3.  Download the models listed in `marker-models.txt` and `vllm-models.txt` to the `../../models/huggingface` directory on your host machine.
 
 **Note**: Ensure you have Docker installed and running.
 
