@@ -211,32 +211,39 @@ class VllmWorker:
         Chunks the text to stay within the context window and processes chunks
         concurrently using ``asyncio``.
 
+        If *prompt_template* is ``None`` or empty, OCR correction is skipped
+        entirely and the original text is returned unchanged (a warning is logged).
+
         Args:
             text: The full document text to process.
-            prompt_template: Optional system prompt override for correction.
+            prompt_template: System prompt for correction.  When ``None`` or
+                empty the correction phase is skipped.
             max_chunk_workers: Maximum number of concurrent async tasks.
 
         Returns:
-            The corrected text with all chunks rejoined.
+            The corrected text with all chunks rejoined, or the original text
+            if no prompt is configured.
 
         Raises:
             ValueError: If the model name is not configured.
         """
+        if not prompt_template:
+            logger.warning(
+                "No block correction prompt configured — skipping OCR error correction. "
+                "Set VLLM_BLOCK_CORRECTION_PROMPT or VLLM_BLOCK_CORRECTION_PROMPT_KEY to enable."
+            )
+            return text
+
         if not self.settings.vllm_model:
             raise ValueError("vllm_model not set for processing")
 
         chunks = self._chunk_text(text, self.settings.vllm_chunk_size)
 
-        system_prompt = prompt_template if prompt_template else (
-            "You are a helpful assistant. Correct the OCR errors in the text provided below. "
-            "Output ONLY the corrected text, maintaining original formatting as much as possible."
-        )
-
         max_workers = max(1, int(max_chunk_workers))
         logger.info(f"Processing {len(chunks)} chunks with vLLM using {max_workers} async workers...")
 
         corrected_chunks = asyncio.get_event_loop().run_until_complete(
-            self._process_chunks_async(chunks, system_prompt, max_workers)
+            self._process_chunks_async(chunks, prompt_template, max_workers)
         )
 
         return "\n\n".join(corrected_chunks)
@@ -314,7 +321,7 @@ class VllmWorker:
         return [
             (image_path, description)
             for image_path, description in zip(image_paths, descriptions)
-            if description
+            if description is not None
         ]
 
     # ------------------------------------------------------------------
@@ -330,6 +337,9 @@ class VllmWorker:
         """
         Process all text chunks concurrently, bounded by *max_workers*.
 
+        Logs summary statistics (total, succeeded, failed) after all chunks
+        have been processed.
+
         Args:
             chunks: List of text chunks.
             system_prompt: The system prompt for OCR correction.
@@ -339,6 +349,9 @@ class VllmWorker:
             List of corrected chunks in original order.
         """
         semaphore = asyncio.Semaphore(max_workers)
+        total = len(chunks)
+        succeeded = 0
+        failed = 0
 
         async def _bounded_process(idx: int, chunk: str) -> Tuple[int, str]:
             async with semaphore:
@@ -349,13 +362,24 @@ class VllmWorker:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         corrected: List[str] = list(chunks)  # fallback copy
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error(f"Async chunk task failed: {result}")
+                failed += 1
                 continue
             idx, text = result
+            # If the returned text is the same as the original chunk,
+            # it was a fallback — count as failed
+            if text is chunks[idx]:
+                failed += 1
+            else:
+                succeeded += 1
             corrected[idx] = text
 
+        logger.info(
+            f"Chunk processing complete: {total} total, "
+            f"{succeeded} succeeded, {failed} failed"
+        )
         return corrected
 
     async def _process_single_chunk_async(
@@ -423,6 +447,9 @@ class VllmWorker:
         """
         Describe all images concurrently, bounded by *max_workers*.
 
+        Logs summary statistics (total, succeeded, failed) after all images
+        have been processed.
+
         Args:
             image_paths: Paths of images to describe.
             prompt_template: Optional system prompt override.
@@ -432,6 +459,9 @@ class VllmWorker:
             List of description strings (or None) in original order.
         """
         semaphore = asyncio.Semaphore(max_workers)
+        total = len(image_paths)
+        succeeded = 0
+        failed = 0
 
         async def _bounded_describe(idx: int, path: Path) -> Tuple[int, Optional[str]]:
             async with semaphore:
@@ -445,10 +475,19 @@ class VllmWorker:
         for result in results:
             if isinstance(result, Exception):
                 logger.error(f"Async image description task failed: {result}")
+                failed += 1
                 continue
             idx, desc = result
+            if desc is None:
+                failed += 1
+            else:
+                succeeded += 1
             descriptions[idx] = desc
 
+        logger.info(
+            f"Image description complete: {total} total, "
+            f"{succeeded} succeeded, {failed} failed"
+        )
         return descriptions
 
     async def _describe_single_image_async(
@@ -475,10 +514,9 @@ class VllmWorker:
             raise ValueError("vllm_model not set for image description")
 
         system_prompt = prompt_template if prompt_template else (
-            "You are an expert document-vision assistant. "
-            "Describe the provided image precisely and factually. "
-            "Include visible text, tables, charts, figures, equations, and layout details when present. "
-            "Do not infer details that are not visible."
+            "Analyze this book scan fragment. Provide a detailed technical description "
+            "of any diagrams, charts, or illustrations. If it is a photo, describe the "
+            "subject and context. Output only the description text."
         )
 
         try:
@@ -526,12 +564,12 @@ class VllmWorker:
             description = content.strip() if content else ""
             if not description:
                 logger.warning(f"Empty image description returned for {image_path.name}")
-                return None
+                return "> **Image Description:** [Description unavailable]"
             return description
 
         except Exception as e:
-            logger.error(f"Failed to describe image {image_index + 1} ({image_path.name}): {e}")
-            return None
+            logger.warning(f"Failed to describe image {image_index + 1} ({image_path.name}): {e}")
+            return "> **Image Description:** [Description unavailable]"
 
     # ------------------------------------------------------------------
     # Internal helpers — server management
@@ -702,17 +740,26 @@ class VllmWorker:
         return (base_delay * (2 ** attempt)) + (random.random() * self.settings.vllm_retry_delay)
 
     # ------------------------------------------------------------------
-    # Internal helpers — text chunking
+    # Internal helpers — Markdown-aware text chunking
     # ------------------------------------------------------------------
+
 
     def _chunk_text(self, text: str, chunk_size: Optional[int] = None) -> List[str]:
         """
-        Split text into chunks of approximately *chunk_size* characters,
-        preferring to break on newline boundaries.
+        Split Markdown text into chunks of approximately *chunk_size* tokens,
+        preserving Markdown structure.
+
+        The method avoids splitting in the middle of:
+        - Headings (lines starting with ``#``)
+        - Fenced code blocks (delimited by triple backticks)
+        - Tables (consecutive lines starting with ``|``)
+
+        Token count is approximated as ``len(text) / 4`` (≈ 4 chars per token),
+        so the character budget per chunk is ``chunk_size * 4``.
 
         Args:
-            text: The text to split.
-            chunk_size: Maximum characters per chunk.  Defaults to
+            text: The Markdown text to split.
+            chunk_size: Maximum *tokens* per chunk.  Defaults to
                 ``self.settings.vllm_chunk_size``.
 
         Returns:
@@ -721,25 +768,144 @@ class VllmWorker:
         if chunk_size is None:
             chunk_size = self.settings.vllm_chunk_size
 
+        # Approximate characters-per-chunk from token budget (≈ 4 chars/token)
+        char_budget = chunk_size * 4
+
+        # Split text into logical blocks separated by blank lines
+        blocks = self._split_into_blocks(text)
+
         chunks: List[str] = []
-        start = 0
-        text_len = len(text)
+        current_chunk_parts: List[str] = []
+        current_len = 0
 
-        while start < text_len:
-            end = start + chunk_size
-            if end >= text_len:
-                chunks.append(text[start:])
-                break
+        for block in blocks:
+            block_len = len(block)
 
-            # Try to find the last newline within the chunk limit
-            last_newline = text.rfind("\n", start, end)
+            # If adding this block would exceed the budget, flush the current chunk
+            if current_chunk_parts and (current_len + block_len) > char_budget:
+                chunks.append("\n\n".join(current_chunk_parts))
+                current_chunk_parts = []
+                current_len = 0
 
-            if last_newline != -1 and last_newline > start:
-                chunks.append(text[start:last_newline])
-                start = last_newline + 1  # Skip the newline character
+            # If a single block exceeds the budget, split it by lines as a fallback
+            if block_len > char_budget:
+                if current_chunk_parts:
+                    chunks.append("\n\n".join(current_chunk_parts))
+                    current_chunk_parts = []
+                    current_len = 0
+                chunks.extend(self._split_large_block(block, char_budget))
             else:
-                # Force break if no newline found
-                chunks.append(text[start:end])
-                start = end
+                current_chunk_parts.append(block)
+                current_len += block_len
+
+        # Flush remaining content
+        if current_chunk_parts:
+            chunks.append("\n\n".join(current_chunk_parts))
+
+        return chunks
+
+    @staticmethod
+    def _split_into_blocks(text: str) -> List[str]:
+        """
+        Split text into logical Markdown blocks.
+
+        Blocks are separated by one or more blank lines.  Fenced code blocks
+        and tables are kept intact as single blocks even if they contain
+        blank lines.
+
+        Args:
+            text: The Markdown text to split.
+
+        Returns:
+            List of block strings.
+        """
+        lines = text.split("\n")
+        blocks: List[str] = []
+        current_block_lines: List[str] = []
+        in_code_fence = False
+        in_table = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Track fenced code blocks (``` ... ```)
+            if stripped.startswith("```"):
+                in_code_fence = not in_code_fence
+                current_block_lines.append(line)
+                continue
+
+            if in_code_fence:
+                current_block_lines.append(line)
+                continue
+
+            # Track table blocks (consecutive lines starting with |)
+            is_table_line = stripped.startswith("|") and stripped.endswith("|")
+            if is_table_line:
+                if not in_table and current_block_lines:
+                    # Flush preceding non-table content
+                    block_text = "\n".join(current_block_lines).strip()
+                    if block_text:
+                        blocks.append(block_text)
+                    current_block_lines = []
+                in_table = True
+                current_block_lines.append(line)
+                continue
+            elif in_table:
+                # End of table — flush it
+                block_text = "\n".join(current_block_lines).strip()
+                if block_text:
+                    blocks.append(block_text)
+                current_block_lines = []
+                in_table = False
+
+            # Blank line outside code/table → block boundary
+            if stripped == "":
+                if current_block_lines:
+                    block_text = "\n".join(current_block_lines).strip()
+                    if block_text:
+                        blocks.append(block_text)
+                    current_block_lines = []
+            else:
+                current_block_lines.append(line)
+
+        # Flush remaining content
+        if current_block_lines:
+            block_text = "\n".join(current_block_lines).strip()
+            if block_text:
+                blocks.append(block_text)
+
+        return blocks
+
+    @staticmethod
+    def _split_large_block(block: str, char_budget: int) -> List[str]:
+        """
+        Split an oversized block into smaller chunks by line boundaries.
+
+        Used as a fallback when a single logical Markdown block (e.g. a very
+        large table or code block) exceeds the character budget.
+
+        Args:
+            block: The oversized text block.
+            char_budget: Maximum characters per chunk.
+
+        Returns:
+            List of sub-chunks.
+        """
+        lines = block.split("\n")
+        chunks: List[str] = []
+        current_lines: List[str] = []
+        current_len = 0
+
+        for line in lines:
+            line_len = len(line) + 1  # +1 for the newline separator
+            if current_lines and (current_len + line_len) > char_budget:
+                chunks.append("\n".join(current_lines))
+                current_lines = []
+                current_len = 0
+            current_lines.append(line)
+            current_len += line_len
+
+        if current_lines:
+            chunks.append("\n".join(current_lines))
 
         return chunks

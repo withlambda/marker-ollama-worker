@@ -124,7 +124,7 @@ To populate your volume with models, use the utilities provided in `config/downl
 ### RunPod Deployment
 
 1.  **Create a Template**: In RunPod, create a new Serverless Template.
-    *   **Image Name**: Your pushed image (e.g., `ghcr.io/your-username/marker-ollama-worker:latest`).
+    *   **Image Name**: Your pushed image (e.g., `ghcr.io/your-username/marker-vllm-worker:latest`).
     *   **Container Disk Size**: 20GB (recommended).
     *   **Environment Variables**: Set defaults (see below).
 
@@ -134,7 +134,7 @@ To populate your volume with models, use the utilities provided in `config/downl
 
 You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are required fields. `input_dir` must be a directory containing the files to process.
 
-**Note on Ollama Configuration:** Any configuration variable for the Ollama worker can be overridden in the job input by prefixing it with `ollama_`. For example, `ollama_context_length` overrides `OLLAMA_CONTEXT_LENGTH`. See the [Ollama Configuration](#ollama-configuration-overrides) section for a full list of supported keys.
+**Note on vLLM Configuration:** Any configuration variable for the vLLM worker can be overridden in the job input by prefixing it with `vllm_`. For example, `vllm_chunk_size` overrides `VLLM_CHUNK_SIZE`. See the [vLLM Configuration](#vllm-configuration-overrides) section for a full list of supported keys.
 
 ```json
 {
@@ -150,9 +150,9 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
     "marker_page_range": "0-10",
     "marker_processors": "marker.processors.images.ImageProcessor",
     "delete_input_on_success": false,
-    "ollama_block_correction_prompt": "Optional custom prompt",
-    "ollama_chunk_workers": 2,
-    "ollama_image_description_prompt": "Optional custom prompt for image descriptions"
+    "vllm_block_correction_prompt": "Optional custom prompt",
+    "vllm_chunk_workers": 2,
+    "vllm_image_description_prompt": "Optional custom prompt for image descriptions"
   }
 }
 ```
@@ -166,10 +166,10 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
 
 #### LLM Post-Processing Parameters
 
-*   `ollama_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM. Takes priority over `block_correction_prompt_key`.
-*   `block_correction_prompt_key`: (Optional) A key referencing a predefined prompt from the [Block Correction Prompt Catalog](#block-correction-prompt-catalog). Ignored if `ollama_block_correction_prompt` is provided.
-*   `ollama_chunk_workers`: (Optional) Number of parallel workers for chunk processing and image description generation. Default: 16, but automatically capped to `OLLAMA_NUM_PARALLEL` to prevent server overload.
-*   `ollama_image_description_prompt`: (Optional) Custom prompt for extracted image descriptions. If omitted, a built-in factual vision prompt is used.
+*   `vllm_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM. Takes priority over `vllm_block_correction_prompt_key`.
+*   `vllm_block_correction_prompt_key`: (Optional) A key referencing a predefined prompt from the [Block Correction Prompt Catalog](#block-correction-prompt-catalog). Ignored if `vllm_block_correction_prompt` is provided.
+*   `vllm_chunk_workers`: (Optional) Number of parallel async tasks for chunk processing and image description generation. Default: 16.
+*   `vllm_image_description_prompt`: (Optional) Custom prompt for extracted image descriptions. If omitted, a built-in book scan analysis prompt is used.
 
 When marker image extraction is enabled, the LLM post-processing phase also describes each extracted image and inserts the descriptions directly into text outputs (`.md`/`.txt`), ideally placed immediately following their corresponding image tags. To ensure clarity for LLMs like NotebookLM or AnythingLM, these descriptions are wrapped in explicit `[BEGIN IMAGE DESCRIPTION]` and `[END IMAGE DESCRIPTION]` markers. If a matching tag cannot be found, the descriptions are appended as a fallback section at the end of the file. Non-text outputs are left unchanged.
 
@@ -189,29 +189,27 @@ The following `marker_`-prefixed keys can be used in the `input` section of the 
 | `marker_output_format`            | The format of the output (markdown, json, etc.).                | `markdown` |
 | `marker_maxtasksperchild`         | Tasks per worker before recycling (prevents memory leaks).      | `10`       |
 
-#### Ollama Configuration Overrides
+#### vLLM Configuration Overrides
 
-The following `ollama_`-prefixed keys can be used in the `input` section of the job payload to override server and client settings for a specific job:
+The following `vllm_`-prefixed keys can be used in the `input` section of the job payload to override server and client settings for a specific job:
 
-| Key                               | Description                                                |
-|:----------------------------------|:-----------------------------------------------------------|
-| `ollama_host`                     | Base URL for the Ollama server (alias: `ollama_base_url`). |
-| `ollama_model`                    | Name of the Ollama model to use.                           |
-| `ollama_context_length`           | Context window size (tokens).                              |
-| `ollama_num_parallel`             | Max parallel requests for the server.                      |
-| `ollama_keep_alive`               | Duration to keep models in memory (e.g., `-1`).            |
-| `ollama_flash_attention`          | Enable/disable Flash Attention (`1` or `0`).               |
-| `ollama_kv_cache_type`            | Quantization for K/V cache (e.g., `q8_0`).                 |
-| `ollama_max_retries`              | Max retries for LLM requests.                              |
-| `ollama_retry_delay`              | Delay (seconds) between retries.                           |
-| `ollama_chunk_size`               | Characters per text chunk (default: `4000`).               |
-| `ollama_debug`                    | Enable Ollama server debug logging (`1`).                  |
-| `ollama_log_dir`                  | Directory for `ollama.log`.                                |
-| `ollama_hf_model_name`            | HF model to build from if `ollama_model` is unset.         |
-| `ollama_hf_model_quantization`    | HF quantization string for building.                       |
-| `ollama_max_loaded_models`        | Max models loaded concurrently.                            |
-| `ollama_max_queue`                | Max number of queued requests.                             |
-| `ollama_image_description_prompt` | Custom prompt for image descriptions.                      |
+| Key                                | Description                                                        |
+|:-----------------------------------|:-------------------------------------------------------------------|
+| `vllm_model`                       | Model name for API calls (derived from path if unset).             |
+| `vllm_host`                        | Host URL where vLLM server runs.                                   |
+| `vllm_port`                        | Port for the vLLM server.                                          |
+| `vllm_gpu_util`                    | Maximum GPU memory fraction for vLLM (0.0–1.0).                   |
+| `vllm_max_model_len`               | Maximum context/sequence length (tokens).                          |
+| `vllm_max_num_seqs`                | Max concurrent sequences (auto-calculated from VRAM).              |
+| `vllm_startup_timeout`             | Seconds to wait for vLLM health check on startup.                  |
+| `vllm_vram_recovery_delay`         | Seconds to wait after Marker before starting vLLM.                 |
+| `vllm_max_retries`                 | Max retries for LLM requests.                                      |
+| `vllm_retry_delay`                 | Delay (seconds) between retries.                                   |
+| `vllm_chunk_size`                  | Tokens per text chunk (default: `4000`). Markdown-structure-aware. |
+| `vllm_chunk_workers`               | Async tasks for parallel chunk processing.                         |
+| `vllm_block_correction_prompt_key` | Key into the block correction prompt catalog.                      |
+| `vllm_block_correction_prompt`     | Custom block correction prompt override.                           |
+| `vllm_image_description_prompt`    | Custom prompt for image descriptions.                              |
 
 #### Performance Tuning Examples
 
@@ -221,7 +219,7 @@ The following `ollama_`-prefixed keys can be used in the `input` section of the 
   "input": {
     "input_dir": "input/",
     "output_dir": "output",
-    "ollama_chunk_workers": 4
+    "vllm_chunk_workers": 4
   }
 }
 ```
@@ -246,7 +244,7 @@ This processes multiple files in parallel through the Marker phase.
     "input_dir": "input/",
     "output_dir": "output",
     "marker_workers": 1,
-    "ollama_chunk_workers": 1
+    "vllm_chunk_workers": 1
   }
 }
 ```
@@ -277,12 +275,12 @@ The worker includes a built-in catalog of specialized OCR correction prompts opt
   "input": {
     "input_dir": "input/document.pdf",
     "output_dir": "output",
-    "ollama_block_correction_prompt": "Your custom prompt here..."
+    "vllm_block_correction_prompt": "Your custom prompt here..."
   }
 }
 ```
 
-**Priority:** If both `ollama_block_correction_prompt` and `block_correction_prompt_key` are provided, the custom prompt (`ollama_block_correction_prompt`) takes priority.
+**Priority:** If both `vllm_block_correction_prompt` and `vllm_block_correction_prompt_key` are provided, the custom prompt (`vllm_block_correction_prompt`) takes priority.
 
 #### Available Prompt Keys
 
@@ -352,7 +350,7 @@ The worker includes a built-in catalog of specialized OCR correction prompts opt
 - **Use Custom Prompts** when you need highly specialized correction rules not covered by the catalog, or when you want to experiment with different prompt strategies.
 - **Combine Approaches:** Start with a catalog prompt, test the results, then create a custom prompt if needed.
 
-#### Examples for Custom `ollama_block_correction_prompt`
+#### Examples for Custom `vllm_block_correction_prompt`
 
 If the predefined catalog prompts don't meet your needs, you can provide a fully custom prompt. Here are some examples to inspire your own custom prompts:
 
@@ -507,12 +505,9 @@ The following variables can also be set to further customize the environment, th
 |:-----------------|:----------------------------------|:--------------------------------------------------|:-------------------------|
 | **Python**       | `PYTHONUNBUFFERED`                | Force unbuffered stdout/stderr.                   | `1`                      |
 | **Hugging Face** | `HF_HUB_OFFLINE`                  | Run Hugging Face Hub in offline mode.             | `1`                      |
-| **Ollama**       | `OLLAMA_HOST`                     | Base URL for Ollama server.                       | `http://127.0.0.1:11434` |
-| **Ollama**       | `OLLAMA_DEBUG`                    | Enable Ollama server debug logging (`1`).         | `0`                      |
-| **Ollama**       | `OLLAMA_IMAGE_DESCRIPTION_PROMPT` | Prompt template for extracted image descriptions. | (Optional)               |
-| **Ollama**       | `OLLAMA_MAX_LOADED_MODELS`        | Max models loaded concurrently.                   | `3 * GPUs`               |
-| **Ollama**       | `OLLAMA_KEEP_ALIVE`               | Duration to keep models loaded in memory.         | `-1`                     |
-| **Ollama**       | `OLLAMA_MODELS`                   | Directory where Ollama models are stored.         | (Managed internally)     |
+| **vLLM**         | `VLLM_HOST`                       | Host URL where vLLM server runs.                  | `http://127.0.0.1:8000`  |
+| **vLLM**         | `VLLM_PORT`                       | Port for the vLLM server.                         | `8000`                   |
+| **vLLM**         | `VLLM_IMAGE_DESCRIPTION_PROMPT`   | Prompt template for extracted image descriptions. | (Optional)               |
 | **PyTorch**      | `PYTORCH_ENABLE_MPS_FALLBACK`     | Fallback to CPU if MPS ops aren't supported.      | `1`                      |
 | **PyTorch**      | `TORCH_NUM_THREADS`               | Threads for intraop parallelism on CPU.           | `1`                      |
 | **PyTorch**      | `OMP_NUM_THREADS`                 | Threads for OpenMP parallel regions.              | `1`                      |
