@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Main handler for the marker-ollama-worker.
+Main handler for the marker-vllm-worker.
 Orchestrates the conversion of documents using the marker-pdf library and
 optional post-processing using a vLLM-powered LLM server.
 """

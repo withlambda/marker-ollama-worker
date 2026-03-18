@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Utility functions and classes for the marker-ollama-worker.
+Utility functions and classes for the marker-vllm-worker.
 Includes environment configuration, resource management (VRAM),
 and path validation utilities.
 """
@@ -35,8 +35,8 @@ def setup_config() -> GlobalConfig:
 
     This function:
     1. Instantiates GlobalConfig, which performs Pydantic validation of environment variables.
-    2. Ensures that directories for Ollama models, logs, and Hugging Face cache exist.
-    3. Sets environment variables for downstream libraries (Ollama, HF).
+    2. Ensures that directories for Hugging Face cache exist.
+    3. Sets environment variables for downstream libraries (HF).
     4. Handles ownership and permission updates if running as root.
     5. Validates additional model-related configuration for post-processing.
 
@@ -55,16 +55,12 @@ def setup_config() -> GlobalConfig:
 
     if config.use_postprocess_llm:
         # Ensure directories exist
-        os.makedirs(config.ollama_models, exist_ok=True)
-        os.makedirs(config.ollama_log_dir, exist_ok=True)
         os.makedirs(config.hf_home, exist_ok=True)
         # Ownership/Permissions (if root)
         # Note: This assumes Linux/Docker environment where UID 0 is root
         # This is required to allow non-root user (appuser) to access mounted volumes
         if os.getuid() == 0:
             _update_ownership(
-                str(config.ollama_models),
-                str(config.ollama_log_dir),
                 str(config.hf_home)
             )
 
