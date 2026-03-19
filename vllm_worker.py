@@ -32,6 +32,11 @@ from typing import Optional, List, Tuple
 
 import httpx
 import openai
+try:
+    import tiktoken
+    _HAS_TIKTOKEN = True
+except ImportError:
+    _HAS_TIKTOKEN = False
 
 from settings import VllmSettings
 
@@ -520,7 +525,7 @@ class VllmWorker:
         Generate a description for a single image using the vision-language model.
 
         The image is base64-encoded and sent as part of a multi-modal chat completion
-        request via the OpenAI client.
+        request via the OpenAI client with exponential backoff retry logic.
 
         Args:
             image_path: Path to the image file.
@@ -545,6 +550,8 @@ class VllmWorker:
         if prompt_template:
             user_instruction = f"{prompt_template}\n\n{user_instruction}"
 
+        fallback_msg = "> **Image Description:** [Description unavailable]"
+
         try:
             # Read and base64-encode the image
             image_data = image_path.read_bytes()
@@ -562,40 +569,62 @@ class VllmWorker:
                 ".tiff": "image/tiff",
             }
             mime_type = mime_map.get(suffix, "image/png")
-
-            response = await self._client.chat.completions.create(
-                model=self.settings.vllm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{b64_image}",
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": user_instruction,
-                            },
-                        ],
-                    },
-                ],
-                max_tokens=1024, # Optimized default for vision tasks
-            )
-
-            content = response.choices[0].message.content
-            description = content.strip() if content else ""
-            if not description:
-                logger.warning(f"Empty image description returned for {image_path.name}")
-                return "> **Image Description:** [Description unavailable]"
-            return description
-
         except Exception as e:
-            logger.warning(f"Failed to describe image {image_index + 1} ({image_path.name}): {e}")
-            return "> **Image Description:** [Description unavailable]"
+            logger.error(f"Failed to prepare image {image_path.name} for description: {e}")
+            return fallback_msg
+
+        for attempt in range(self.settings.vllm_max_retries + 1):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self.settings.vllm_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{b64_image}",
+                                    },
+                                },
+                                {
+                                    "type": "text",
+                                    "text": user_instruction,
+                                },
+                            ],
+                        },
+                    ],
+                    max_tokens=1024, # Optimized default for vision tasks
+                )
+
+                content = response.choices[0].message.content
+                description = content.strip() if content else ""
+                if not description:
+                    logger.warning(f"Empty image description returned for {image_path.name}")
+                    return fallback_msg
+                return description
+
+            except Exception as e:
+                is_last = attempt == self.settings.vllm_max_retries
+                if self._is_retryable_error(e) and not is_last:
+                    delay = self._compute_backoff(attempt, e)
+                    logger.warning(
+                        f"Retryable error describing image {image_index + 1} "
+                        f"(attempt {attempt + 1}/{self.settings.vllm_max_retries + 1}). "
+                        f"Retrying in {delay:.2f}s... Error: {e}"
+                    )
+                    await self._maybe_restart_server()
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logger.error(
+                        f"Fatal error describing image {image_index + 1} ({image_path.name}) "
+                        f"after {attempt + 1} attempts: {e}"
+                    )
+                    return fallback_msg
+
+        return fallback_msg
 
     # ------------------------------------------------------------------
     # Internal helpers — server management
@@ -780,6 +809,26 @@ class VllmWorker:
     # ------------------------------------------------------------------
 
 
+    def _count_tokens(self, text: str) -> int:
+        """
+        Count tokens in a string using tiktoken if available,
+        else falls back to a 4-chars-per-token heuristic.
+
+        Args:
+            text: The string to count tokens for.
+
+        Returns:
+            Estimated or actual token count.
+        """
+        if _HAS_TIKTOKEN:
+            try:
+                # Use cl100k_base (GPT-4) as a robust proxy for most modern LLMs
+                encoding = tiktoken.get_encoding("cl100k_base")
+                return len(encoding.encode(text, disallowed_special=()))
+            except Exception:
+                pass
+        return len(text) // 4
+
     def _chunk_text(self, text: str, chunk_size: Optional[int] = None) -> List[str]:
         """
         Split Markdown text into chunks of approximately *chunk_size* tokens,
@@ -790,8 +839,7 @@ class VllmWorker:
         - Fenced code blocks (delimited by triple backticks)
         - Tables (consecutive lines starting with ``|``)
 
-        Token count is approximated as ``len(text) / 4`` (≈ 4 chars per token),
-        so the character budget per chunk is ``chunk_size * 4``.
+        Token count is measured via tiktoken or approximated as 4 chars/token.
 
         Args:
             text: The Markdown text to split.
@@ -804,35 +852,33 @@ class VllmWorker:
         if chunk_size is None:
             chunk_size = self.settings.vllm_chunk_size
 
-        # Approximate characters-per-chunk from token budget (≈ 4 chars/token)
-        char_budget = chunk_size * 4
-
         # Split text into logical blocks separated by blank lines
         blocks = self._split_into_blocks(text)
 
         chunks: List[str] = []
         current_chunk_parts: List[str] = []
-        current_len = 0
+        current_tokens = 0
 
         for block in blocks:
-            block_len = len(block)
+            block_tokens = self._count_tokens(block)
 
             # If adding this block would exceed the budget, flush the current chunk
-            if current_chunk_parts and (current_len + block_len) > char_budget:
+            if current_chunk_parts and (current_tokens + block_tokens) > chunk_size:
                 chunks.append("\n\n".join(current_chunk_parts))
                 current_chunk_parts = []
-                current_len = 0
+                current_tokens = 0
 
             # If a single block exceeds the budget, split it by lines as a fallback
-            if block_len > char_budget:
+            if block_tokens > chunk_size:
                 if current_chunk_parts:
                     chunks.append("\n\n".join(current_chunk_parts))
                     current_chunk_parts = []
-                    current_len = 0
-                chunks.extend(self._split_large_block(block, char_budget))
+                    current_tokens = 0
+                # Fallback splitting (still uses 4 chars per token approximation for char budget)
+                chunks.extend(self._split_large_block(block, chunk_size * 4))
             else:
                 current_chunk_parts.append(block)
-                current_len += block_len
+                current_tokens += block_tokens
 
         # Flush remaining content
         if current_chunk_parts:

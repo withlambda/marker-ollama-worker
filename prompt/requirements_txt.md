@@ -1,21 +1,22 @@
-# Context
-This file, `requirements.txt`, lists the Python dependencies required for the marker-vllm-worker. It ensures that all necessary libraries for PDF processing, API communication, and configuration management are installed with compatible versions.
+# Dependencies (requirements.txt)
 
-# Interface
+## Context
+Project dependencies for Marker-PDF, RunPod serverless, and the vLLM inference worker.
 
-## Main Dependencies
-- `psutil==5.9.0`: Used for system and process monitoring.
-- `requests==2.31.0`: Standard library for synchronous HTTP requests.
-- `marker-pdf==1.10.2`: The core library for PDF-to-Markdown conversion.
-- `runpod==1.8.1`: The RunPod SDK for serverless worker integration.
-- `openai>=1.0.0`: The official OpenAI client, used here to communicate with the OpenAI-compatible vLLM server.
-- `httpx>=0.27.0`: Used for asynchronous HTTP requests and health checks.
-- `tiktoken>=0.7.0`: Used for precise token counting (approximate character-to-token ratio fallback is used in code).
-- `pydantic==2.12.5`: Data validation and settings management (v2).
-- `pydantic-settings==2.12.0`: Extension for Pydantic to handle environment-based settings.
+## Logic
+### Dependency Pinning
+All dependencies are pinned to specific versions for environment stability:
+- `psutil==5.9.0`: Process and system monitoring.
+- `requests==2.31.0`: Synchronous HTTP requests.
+- `marker-pdf==1.10.2`: Core document conversion engine (vLLM branch compatible).
+- `runpod==1.8.1`: Serverless worker infrastructure.
+- `openai==2.29.0`: Async client for communicating with the vLLM API.
+- `httpx==0.28.1`: Async HTTP engine for API interactions.
+- `tiktoken==0.12.0`: Accurate token counting for context window management.
+- `vllm==0.17.1`: Standalone inference server for LLM post-processing.
+- `pydantic==2.12.5`: Structured configuration and validation.
+- `pydantic-settings==2.12.0`: Environment-variable based settings management.
 
-# Logic
-The `Dockerfile` uses this file to install the application's Python environment. Versions are pinned (or have minimum versions) to ensure reproducibility and stability across container builds.
-
-# Goal
-The prompt file provides the exact list of libraries and versions required to recreate the Python environment for the worker.
+## Goal
+Reproduce a stable dependency list that ensures all components (Marker, vLLM, and RunPod) work together with the following specific pinned versions:
+- `psutil==5.9.0`, `requests==2.31.0`, `marker-pdf==1.10.2`, `runpod==1.8.1`, `openai==2.29.0`, `httpx==0.28.1`, `tiktoken==0.12.0`, `vllm==0.17.1`, `pydantic==2.12.5`, `pydantic-settings==2.12.0`.

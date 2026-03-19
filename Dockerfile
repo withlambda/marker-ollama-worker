@@ -26,9 +26,9 @@ FROM ${BASE_IMAGE}
 ARG DOWNLOAD_MARKER_MODELS
 
 # 3. ENVIRONMENT SETTINGS
+# Redirect caches so non-root user can read models downloaded by root
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
-    # Redirect caches so non-root user can read models downloaded by root
     XDG_CACHE_HOME=/app/cache \
     TORCH_HOME=/app/cache/torch
 
@@ -42,11 +42,8 @@ ENV VLLM_MODEL_PATH=/app/cache/huggingface/hub \
 WORKDIR /app
 COPY requirements.txt ./
 
-RUN mkdir -p ${XDG_CACHE_HOME} \
-    # 6. SYSTEM DEPENDENCIES
-    # poppler-utils: Required for PDF processing
-    # tesseract-ocr: Required for OCR capabilities
-    && apt-get update \
+RUN mkdir -p ${XDG_CACHE_HOME} && \
+    apt-get update \
     && apt-get install -y \
     poppler-utils \
     tesseract-ocr \
@@ -55,10 +52,8 @@ RUN mkdir -p ${XDG_CACHE_HOME} \
     gcc \
     python3-dev \
     gosu \
-    && pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir pip \
     && pip install --no-cache-dir -r requirements.txt \
-    # 7. Install vLLM (standalone server, not imported by worker code)
-    && pip install --no-cache-dir vllm \
     && python3 -c "from marker.util import assign_config, download_font; download_font();" \
     && if [ "${DOWNLOAD_MARKER_MODELS}" = "true" ]; then \
     	python3 -c "from marker.models import create_model_dict; create_model_dict()"; \

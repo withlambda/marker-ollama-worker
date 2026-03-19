@@ -11,7 +11,7 @@ The container runs a Python handler script that listens for jobs from the RunPod
 4.  **Result**: Returns the result:
     -   `status`: `completed`, `partially_completed` (if some files failed post-processing), or `success` (if no files were found).
     -   `message`: A summary description of the outcome.
-    -   `failures`: (Optional) A list of filenames that failed during the vLLM post-processing phase.
+    -   `failures`: (Optional) A list of filenames that failed during the vLLM post-processing phase. In the event of a critical vLLM server failure, this will contain the specific error message to help diagnostics.
 
 ### Process Architecture
 
@@ -37,6 +37,7 @@ When LLM post-processing is enabled, the handler spawns a vLLM server subprocess
 *   **Serverless Worker**: Fully compatible with RunPod Serverless.
 *   **Multi-Format Support**: Supports `.pdf`, `.pptx`, `.docx`, `.xlsx`, `.html`, and `.epub`.
 *   **vLLM Integration**: Leverages a local vLLM server subprocess for high-performance LLM inference via an OpenAI-compatible API.
+*   **Token Precision**: Integrates `tiktoken` for accurate context window utilization during text chunking.
 *   **Local Model Weights**: Loads models directly from a local directory (`VLLM_MODEL_PATH`), avoiding runtime downloads.
 *   **NVIDIA Optimized**: Uses the official `pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime` base image for maximum GPU performance.
 *   **Configurable**: Job inputs can override default environment variables.
@@ -46,6 +47,8 @@ When LLM post-processing is enabled, the handler spawns a vLLM server subprocess
 The worker is designed to maximize GPU utilization while avoiding Out-of-Memory (OOM) errors. It follows a two-phase processing model:
 1.  **Marker Phase**: Documents are converted to the target format. Marker models (Surya, etc.) are loaded into VRAM.
 2.  **vLLM Phase**: After Marker completes, CUDA cache is cleared and a configurable VRAM recovery delay (`VLLM_VRAM_RECOVERY_DELAY`) ensures GPU memory is fully released before vLLM starts.
+
+The vLLM worker implements robust error handling, including exponential backoff and automatic server restarts, for both text correction and image description tasks.
 
 This sequential execution model ensures that vLLM has full access to VRAM for loading and serving the LLM.
 

@@ -657,10 +657,14 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             log_vram_usage("Final")
 
         except Exception as e:
-            logger.error(f"Error during vLLM post-processing phase: {e}")
-            if vllm_worker:
-                vllm_worker.stop_server()
-            raise
+            logger.error(f"Critical error during vLLM post-processing phase: {e}")
+            # If the vLLM phase fails critically, we still return the Marker results
+            # but with a partially_completed status and error message.
+            return {
+                "status": "partially_completed",
+                "message": f"Marker succeeded, but vLLM phase failed critically: {e}",
+                "failures": failed_post_processing if failed_post_processing else ["vLLM_phase_crash"]
+            }
 
     # Cleanup: Delete the original file on success
     # Only delete it if we reached here successfully and delete_input_on_success is enabled
