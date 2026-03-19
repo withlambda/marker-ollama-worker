@@ -8,7 +8,10 @@ The container runs a Python handler script that listens for jobs from the RunPod
 1.  **Marker Phase**: Processes the specified input directory using `marker-pdf` for document conversion (OCR, layout detection, etc.).
 2.  **vLLM Phase**: If LLM post-processing is enabled, starts a vLLM server subprocess, waits for readiness via health-check polling, and processes converted text through the model for OCR error correction and image descriptions.
 3.  **Cleanup**: Deletes the input file upon successful processing (optional).
-4.  **Result**: Returns the result (status, processed files, errors).
+4.  **Result**: Returns the result:
+    -   `status`: `completed`, `partially_completed` (if some files failed post-processing), or `success` (if no files were found).
+    -   `message`: A summary description of the outcome.
+    -   `failures`: (Optional) A list of filenames that failed during the vLLM post-processing phase.
 
 ### Process Architecture
 

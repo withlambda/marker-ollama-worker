@@ -95,7 +95,13 @@ class GlobalConfig(BaseSettings):
 
     @model_validator(mode='after')
     def init_environment_variables(self) -> 'GlobalConfig':
-        """Initialize environment variables from validated fields."""
+        """
+        Export validated configuration fields as environment variables.
+
+        This ensures that downstream libraries (like Hugging Face Transformers)
+        that rely on specific environment variables (e.g., HF_HOME) receive
+        the correctly validated and auto-computed paths.
+        """
         for (prop, alias) in [
             (self.hf_home, "HF_HOME"),
         ]:
@@ -110,6 +116,16 @@ class GlobalConfig(BaseSettings):
     ) -> dict[str, str]:
         """
         Loads the block correction prompt library from a JSON file.
+
+        This method is resilient to missing or malformed files; it returns
+        an empty dictionary and logs a warning/error instead of crashing.
+
+        Args:
+            block_correction_prompts_file_path: Path to the JSON library.
+            file_encoding: Encoding of the file (usually UTF-8).
+
+        Returns:
+            Dictionary mapping prompt keys to their template strings.
         """
         if not block_correction_prompts_file_path.exists():
             logger.warning(f"Block correction prompt catalog not found at {block_correction_prompts_file_path}. Using empty library.")
@@ -292,7 +308,13 @@ class VllmSettings(BaseSettings):
 
     @model_validator(mode='after')
     def init_environment_variables(self) -> 'VllmSettings':
-        """Export VLLM_* environment variables from validated fields."""
+        """
+        Export vLLM configuration fields as environment variables.
+
+        This makes the validated settings available to the vLLM server
+        subprocess and other components that check the environment for
+        configuration.
+        """
         for (prop, alias) in [
             (self.vllm_host, "VLLM_HOST"),
             (self.vllm_port, "VLLM_PORT"),
@@ -306,7 +328,16 @@ class VllmSettings(BaseSettings):
 
     @model_validator(mode='after')
     def validate_model_name(self) -> 'VllmSettings':
-        """Ensure vllm_model is set, deriving it from vllm_model_path if necessary."""
+        """
+        Ensure the vLLM model name is set.
+
+        If VLLM_MODEL is not explicitly provided, it is derived from the
+        last component of the VLLM_MODEL_PATH (e.g., /path/to/Llama-3-8B -> Llama-3-8B).
+        This name is required for API calls to the vLLM server.
+
+        Raises:
+            ValueError: If the model name cannot be derived from the path.
+        """
         if not self.vllm_model:
             # Derive model name from the last component of the model path
             derived_name = Path(self.vllm_model_path).name

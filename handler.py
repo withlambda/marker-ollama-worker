@@ -113,14 +113,22 @@ def calculate_optimal_marker_workers(
     marker_config: MarkerSettings,
 ) -> int:
     """
-    Calculates optimal marker worker counts based on workload and available VRAM.
+    Calculates the optimal number of marker worker processes based on
+    workload and available VRAM.
+
+    This function prevents GPU out-of-memory errors by ensuring that the
+    total VRAM reserved for marker processes (marker_workers * vram_gb_per_worker)
+    plus the system reserve (vram_gb_reserve) does not exceed the total
+    available GPU memory.
 
     Args:
-        num_files (int): Number of files to process
-        app_config (GlobalConfig): Global configuration settings
-        marker_config (MarkerSettings): Marker-specific configuration settings
+        num_files: The number of files in the current processing batch.
+        app_config: Global configuration containing total VRAM and reserve.
+        marker_config: Marker-specific settings (workers override, VRAM per worker).
+
     Returns:
-        int: optimal_marker_workers
+        The number of worker processes to instantiate, bounded by workload,
+        available VRAM, and a reasonable parallel processing limit (default: 4).
     """
     # Get VRAM configuration
 
@@ -174,19 +182,27 @@ def insert_image_descriptions_to_text_file(
     image_descriptions: List[Tuple[Path, str]]
 ) -> bool:
     """
-    Inserts generated image descriptions into a text output file at the position
-    where the image appears, or appends them to the end if the position cannot be found.
+    Inserts generated image descriptions into the converted document.
 
-    Only text-based output formats (.md, .txt) are processed. Non-text formats
-    (e.g., .json, .html) are skipped to avoid producing invalid syntax.
+    This method attempts to place descriptions immediately after their
+    corresponding image tags (e.g., Markdown images) within the file.
+    If the original image reference cannot be found, descriptions are
+    appended as a new section at the end of the file.
+
+    Constraints:
+        - Only text-based formats (.md, .txt) are supported to ensure the
+          Markdown-formatted descriptions do not corrupt structured outputs
+          like JSON or HTML.
+        - Descriptions are formatted as blockquotes with explicit start/end
+          markers for downstream clarity.
 
     Args:
-        app_config (GlobalConfig): Global configuration settings.
-        output_file_path (Path): Marker output text file.
-        image_descriptions (List[Tuple[Path, str]]): (image path, description) tuples.
+        app_config: The global application configuration.
+        output_file_path: Path to the main text-based output file.
+        image_descriptions: List of (image file path, description text) pairs.
 
     Returns:
-        bool: True when descriptions were inserted or appended, False otherwise.
+        True if the file was modified, False otherwise.
     """
     if not image_descriptions:
         return False
@@ -445,7 +461,10 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         job (Dict[str, Any]): The RunPod job object containing 'input' parameters.
 
     Returns:
-        Dict[str, Any]: A result dictionary with 'status' and a summary message.
+        Dict[str, Any]: A result dictionary containing:
+            - status: 'success', 'completed', or 'partially_completed'.
+            - message: Summary description of the operation outcome.
+            - failures: List of filenames that failed post-processing (if status is 'partially_completed').
     """
 
     # --- Configuration and Environment Setup ---

@@ -305,8 +305,8 @@ class VllmWorker:
             max_image_workers: Maximum number of concurrent async tasks.
 
         Returns:
-            List of (image_path, description) tuples for successfully described images,
-            preserving the original order.
+            List of (image_path, description) tuples for described images,
+            including placeholders for failures, preserving the original order.
         """
         if not image_paths:
             return []
@@ -354,6 +354,16 @@ class VllmWorker:
         failed = 0
 
         async def _bounded_process(idx: int, chunk: str) -> Tuple[int, str]:
+            """
+            Process a single chunk with semaphore-based concurrency control.
+
+            Args:
+                idx: Original index of the chunk.
+                chunk: The text content of the chunk.
+
+            Returns:
+                Tuple containing the original index and the processed text.
+            """
             async with semaphore:
                 result = await self._process_single_chunk_async(chunk, system_prompt, idx)
                 return idx, result
@@ -456,7 +466,7 @@ class VllmWorker:
             max_workers: Semaphore limit for concurrent API calls.
 
         Returns:
-            List of description strings (or None) in original order.
+            List of description strings (including placeholders for failures) in original order.
         """
         semaphore = asyncio.Semaphore(max_workers)
         total = len(image_paths)
@@ -464,6 +474,16 @@ class VllmWorker:
         failed = 0
 
         async def _bounded_describe(idx: int, path: Path) -> Tuple[int, Optional[str]]:
+            """
+            Describe a single image with semaphore-based concurrency control.
+
+            Args:
+                idx: Original index of the image.
+                path: File path to the image.
+
+            Returns:
+                Tuple containing the original index and the generated description.
+            """
             async with semaphore:
                 result = await self._describe_single_image_async(path, prompt_template, idx)
                 return idx, result
@@ -478,7 +498,7 @@ class VllmWorker:
                 failed += 1
                 continue
             idx, desc = result
-            if desc is None:
+            if desc is None or "[Description unavailable]" in desc:
                 failed += 1
             else:
                 succeeded += 1
@@ -504,11 +524,12 @@ class VllmWorker:
 
         Args:
             image_path: Path to the image file.
-            prompt_template: Optional custom system prompt for the description.
+            prompt_template: Optional custom prompt prefix or template for the description.
+                             If provided, it's combined with a default instruction.
             image_index: Zero-based image index for logging.
 
         Returns:
-            The description string, or None on failure.
+            The description string, or a placeholder string on failure.
         """
         if not self.settings.vllm_model:
             raise ValueError("vllm_model not set for image description")
@@ -608,6 +629,9 @@ class VllmWorker:
 
         Retries every ``_HEALTH_CHECK_INTERVAL`` seconds until either HTTP 200
         is received or ``vllm_startup_timeout`` elapses.
+
+        If the health check fails or times out, the subprocess's stdout/stderr
+        is captured and included in the raised ``RuntimeError`` for diagnostics.
 
         Raises:
             RuntimeError: If the health check times out or the subprocess exits
