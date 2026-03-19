@@ -1,34 +1,42 @@
-# `release.sh`
+# Context
+This file, `release.sh`, is a Bash script designed to automate the project's release process. It handles version bumping, updating dependencies (specifically `marker-pdf` in `requirements.txt`), generating a changelog from git commits, tagging the repository, and pushing changes to the remote.
 
-## Context
-This script automates the release process for the project. It handles version bumping, changelog updates, and git tagging/pushing. It supports both local and CI (GitHub Actions) execution.
+# Interface
 
-## Logic
-1.  **Arguments**:
-    *   `[-d|--dry-run]`: Optional flag to simulate the release without committing or pushing changes.
-    *   `<version>`: The target version (e.g., `1.10.3` or `v1.10.3`).
-2.  **Normalization & Validation**:
-    *   Strips the leading `v` from the version if present.
-    *   Validates the version format against `^[0-9]+\.[0-9]+\.[0-9]+$`.
-3.  **Checks**:
-    *   Checks for uncommitted changes using `git diff-index`. Exits if present.
-    *   Checks if the tag `v<version>` already exists. Exits if so.
-    *   Warns if not on `main` or `master` branch (non-interactive in CI).
-4.  **Update Files**:
-    *   Writes `<version>` to `VERSION` file.
-    *   Updates `marker-pdf` version in `requirements.txt` using `sed`. Handles MacOS vs. Linux syntax differences.
-5.  **Changelog**:
-    *   Generates a new entry in `CHANGELOG.md` with current date.
-    *   Gets commits since the last tag (or all if no tags exist).
-    *   Formats as `- <commit_message>`.
-    *   Prepends new entry to existing `CHANGELOG.md` (skipping header) or creates new file.
-6.  **Git Operations**:
-    *   Adds `VERSION`, `requirements.txt`, and `CHANGELOG.md` to git.
-    *   Commits with message "Bump version to <version>".
-    *   Creates annotated tag `v<version>`.
-    *   Pushes changes and tag to remote repository.
-7.  **Dry-Run Support**:
-    *   If dry-run is enabled, all file modifications and git operations are logged as `[DRY RUN]` and not executed.
+## Arguments
+- `[version]` (Required): The new version number in `X.Y.Z` format.
+- `-d | --dry-run`: Performs all checks and shows what would happen, but does not commit or push any changes.
+- `-h | --help`: Displays usage information.
 
-## Environment Variables
-*   `GITHUB_ACTIONS`: Used to detect CI environment for non-interactive behavior.
+## Input Files
+- `VERSION`: Stores the current project version.
+- `requirements.txt`: Contains the pinned version of `marker-pdf`.
+- `CHANGELOG.md`: The history of changes.
+
+# Logic
+
+### 1. Validation and Setup
+- Strips any 'v' prefix from the input version to normalize it.
+- Validates the version matches `^[0-9]+\.[0-9]+\.[0-9]+$`.
+- Checks if the current working directory has uncommitted changes using `git diff-index`.
+- Verifies that the proposed version tag (`vX.Y.Z`) does not already exist.
+- Warns the user if they are not on the `main` or `master` branch.
+
+### 2. Version and Dependency Update
+- Overwrites the `VERSION` file with the new version string.
+- Uses `sed` to update the `marker-pdf==X.Y.Z` line in `requirements.txt`. It handles OS-specific differences between macOS (`sed -i ''`) and Linux.
+
+### 3. Changelog Generation
+- Identifies the last tag using `git describe --tags --abbrev=0`.
+- Retrieves all commit messages since that tag (or all commits if no tag exists) using `git log --pretty=format:"- %s"`.
+- Creates a new entry with the version and current date.
+- Prepends this entry to `CHANGELOG.md`. If the file starts with a "# Changelog" header, it preserves the header and inserts the new entry immediately below it.
+
+### 4. Git Operations
+- Stages `VERSION`, `requirements.txt`, and `CHANGELOG.md`.
+- Commits with the message "Bump version to X.Y.Z".
+- Creates an annotated tag: `git tag -a "vX.Y.Z" -m "Release vX.Y.Z"`.
+- Pushes the current branch and the new tag to `origin`.
+
+# Goal
+The prompt file provides the full automation logic and string manipulation rules (like `sed` patterns and `git` commands) required to regenerate `release.sh` exactly.

@@ -1,29 +1,43 @@
-# `test/run.sh`
+# Context
+This script, `test/run.sh`, is the primary integration test for the project. It automates the setup of a clean test environment, generates sample data, builds the Docker image, and executes the container to verify the end-to-end PDF-to-Markdown conversion and LLM post-processing logic.
 
-## Context
-This script automates the process of running local tests for the Dockerized Marker-PDF worker. It sets up a test environment, generates sample data, builds the Docker image, and executes the handler inside the container.
+# Interface
 
-## Logic
-1.  **Cleanup**:
-    *   Removes `build/test` and its subdirectories.
-    *   Creates new `build/test`, `test-data/input`, and `test-data/output` directories.
-2.  **Setup**:
-    *   Copies `Dockerfile`, `handler.py`, and other files (`*.txt`, `*.py`, `*.env`) to `build/test`.
-    *   Installs dependencies from `requirements-setup.txt`.
-3.  **Data Generation**:
-    *   Calls `python3 create-sample-pdfs.py` to generate `test1.pdf` and `test2.pdf`.
-4.  **Docker Build**:
-    *   Builds the Docker image `marker-with-ollama-test` using `Dockerfile`.
-5.  **Docker Run**:
-    *   Runs the container with mounted volumes:
-        *   `~/.ollama/`: Ollama cache.
-        *   `models/datalab`: Marker model cache.
-        *   `test-data/input`: Input directory.
-        *   `test-data/output`: Output directory.
-    *   Executes `test-handler.py` as `HANDLER_FILE_NAME` via `custom.env`.
-6.  **Verification**:
-    *   Checks if output directory exists.
-    *   Looks for generated `.md` files in the output directory.
-    *   Prints success message if files found, failure if not.
-7.  **Exit**:
-    *   Exits with code 0 on success, non-zero on failure.
+## Environment Variables
+- `TEST_INPUT_DIR`: Path where sample PDFs are generated (default: `build/test/test-data/input`).
+- `TEST_OUTPUT_DIR`: Path where conversion results are saved (default: `build/test/test-data/output`).
+
+## Configuration
+- `DOCKER_CONTAINER`: `marker-with-vllm-test`.
+- `BUILD_TEST_DIR`: `build/test`.
+
+# Logic
+
+### 1. Environment Setup
+- Deletes and recreates the `build/test` directory.
+- Copies all necessary source files (`*.py`, `Dockerfile`, `requirements.txt`, etc.) and test configuration (`*.env`, `requirements-setup.txt`) into the build directory.
+- Installs local testing dependencies from `requirements-setup.txt`.
+
+### 2. Data Generation
+- Checks `TEST_INPUT_DIR` for sample PDFs.
+- If missing, it invokes `python3 create-sample-pdfs.py` to generate dummy documents for testing.
+
+### 3. Image Build
+- Executes `docker build` using the copied `Dockerfile` and tags the result as `marker-with-vllm-test`.
+
+### 4. Container Execution
+- Runs the Docker container with:
+  - `--shm-size=2gb`: Required for PyTorch multiprocessing.
+  - Multiple `--env-file` arguments to load test settings (`custom.env`, `marker.env`, `tools.env`).
+  - Volume mounts for:
+    - Model weights (Marker models).
+    - Test input directory (`/v/input`).
+    - Test output directory (`/v/output`).
+- Executes the default handler logic inside the container.
+
+### 5. Verification
+- Scans `TEST_OUTPUT_DIR` for the presence of `.md` files.
+- Exits with code 0 on success (Markdown files found), or 1 on failure.
+
+# Goal
+The prompt file captures the full integration testing pipeline, including the Docker orchestration and volume mounting strategy required to recreate the local verification environment.

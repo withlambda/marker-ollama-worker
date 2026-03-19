@@ -1,53 +1,54 @@
-# `Dockerfile`
+# Context
+This `Dockerfile` defines the containerized environment for the marker-vllm-worker. It provides a consistent runtime with PyTorch, CUDA, system dependencies for PDF processing (poppler, tesseract), the `marker-pdf` library, and the `vllm` inference server. It replaces the previous Ollama-based architecture with a standalone vLLM server.
 
-## Context
-This Dockerfile defines the environment for the `marker-ollama-worker`. It combines PyTorch, Ollama, and Marker dependencies to create a runtime for converting documents to markdown with optional LLM post-processing. It is based on a specific `pytorch/pytorch` image.
+# Interface
 
-## Arguments
+## Build Arguments (ARGs)
+- `PYTORCH_VERSION` (Default: 2.8.0).
+- `CUDA_VERSION` (Default: 12.8).
+- `CUDNN_VERSION` (Default: 9).
+- `DOWNLOAD_MARKER_MODELS` (Default: "false"): If set to "true", downloads Marker's base models during the build phase.
+- `BASE_IMAGE`: Defaults to `pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime`.
 
-*   `PYTORCH_VERSION`: Default `2.8.0`. The PyTorch version.
-*   `CUDA_VERSION`: Default `12.8`. The CUDA version.
-*   `CUDNN_VERSION`: Default `9`. The cuDNN version.
-*   `OLLAMA_SERVER_VERSION`: Default `0.18.0`. The Ollama version.
-*   `DOWNLOAD_MARKER_MODELS`: Default `"false"`. Boolean flag to download marker models during build.
-*   `BASE_IMAGE`: Default `pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime`.
+## Runtime Environment Variables (ENVs)
+- `PYTHONUNBUFFERED=1`.
+- `XDG_CACHE_HOME=/app/cache`, `TORCH_HOME=/app/cache/torch`: Redirects caches to a central location.
+- `VLLM_MODEL_PATH=/app/cache/huggingface/hub`.
+- `VLLM_PORT=8000`.
+- `VLLM_GPU_UTIL=0.90`.
+- `VLLM_MAX_MODEL_LEN=16384`.
+- `HANDLER_FILE_NAME="handler.py"`.
 
-## Stages
+# Logic
 
-1.  **Load Ollama Image**: Pulls the `ollama/ollama:${OLLAMA_SERVER_VERSION}` image as `ollama-source` to copy the binary.
-2.  **Base Image**: Uses `${BASE_IMAGE}` as the foundation.
+### 1. Base Image and OS Setup
+- Uses the official PyTorch CUDA runtime as the base.
+- Sets `DEBIAN_FRONTEND=noninteractive` to suppress prompts during `apt-get`.
 
-## Environment Variables
+### 2. System Dependencies
+- `poppler-utils`: Essential for PDF rendering and text extraction.
+- `tesseract-ocr`: Provides OCR fallback for scanned documents.
+- `curl`, `zstd`: Utilities for model downloading and decompression.
+- `gcc`, `python3-dev`: Required for compiling some Python extensions (purged after use).
+- `gosu`: Used to transition from root to non-root user while preserving permissions.
 
-*   `DEBIAN_FRONTEND`: `noninteractive`
-*   `PYTHONUNBUFFERED`: `1`
-*   `OLLAMA_HOST`: `0.0.0.0`
-*   `XDG_CACHE_HOME`: `/app/cache` (Redirected for non-root access)
-*   `TORCH_HOME`: `/app/cache/torch`
+### 3. Python Environment
+- Upgrades `pip`.
+- Installs dependencies from `requirements.txt`.
+- Installs `vllm` as a standalone server.
+- Downloads required fonts for Marker using `download_font()`.
+- Conditionally downloads Marker models if `DOWNLOAD_MARKER_MODELS` is true.
 
-## Installation Steps
+### 4. Application Files
+- Copies all Python scripts (`*.py`) and the `block_correction_prompts.json` catalog into `/app`.
 
-1.  **Install Ollama**: Copies `/usr/bin/ollama` and `/usr/lib/ollama` from the `ollama-source` stage to ensure GPU runners are available.
-2.  **Setup Workdir**: Sets `/app` as the working directory.
-3.  **Copy Requirements**: Copies `requirements.txt`.
-4.  **System Dependencies**:
-    *   Creates `${XDG_CACHE_HOME}`.
-    *   Updates `apt-get` and installs:
-        *   `poppler-utils` (PDF processing)
-        *   `tesseract-ocr` (OCR capabilities)
-        *   `curl`, `zstd`, `gcc`, `python3-dev`, `gosu`.
-    *   Upgrades `pip`.
-    *   Installs Python packages from `requirements.txt`.
-    *   Downloads Marker fonts (`marker.util.download_font`).
-    *   Conditionally downloads Marker models if `DOWNLOAD_MARKER_MODELS` is true.
-    *   Purges build dependencies (`gcc`, `python3-dev`) and cleans up `apt` lists.
-5.  **Copy Application Code**: Copies `*.py` and `block_correction_prompts.json` to `/app`.
-6.  **Create Non-Root User**:
-    *   Creates `appuser` (UID 1000) and `appgroup`.
-    *   Sets ownership of `/app` and `/home/appuser` to `appuser:appgroup`.
-7.  **Start Command**: Sets `CMD [ "python3", "-u", "handler.py" ]`.
+### 5. Security and Permissions
+- Creates a non-root user `appuser` (UID 1000) and group `appgroup`.
+- Grants `appuser` ownership of the `/app` directory and their home directory.
+- The container is designed to start as root (to allow `utils.py` to fix volume permissions) and then drop to `appuser` for the main handler logic.
 
-## Logic
-*   The Dockerfile ensures a consistent environment for running Marker and Ollama.
-*   It handles model caching and user permissions to allow running as a non-root user (important for security and some cloud environments).
-*   It separates build dependencies from runtime dependencies to keep the image size optimized.
+### 6. Execution
+- Entry point: `python3 -u "${HANDLER_FILE_NAME}"`.
+
+# Goal
+The prompt file captures the precise multi-stage build process, dependency tree (including Marker and vLLM), and the security model (root-to-user transition) required to recreate the container exactly.

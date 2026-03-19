@@ -1,13 +1,14 @@
-# `test/surya.env`
+# Context
+This file, `test/surya.env`, defines environment variables for the `surya` library, which is a dependency of `marker-pdf` used for layout analysis and OCR. It specifies the local paths and model checkpoints.
 
-## Context
-This file defines environment variables specific to the `Surya` library, used for layout analysis and OCR within Marker.
+# Interface
 
 ## Variables
-*   `MODEL_CACHE_DIR`: `/v/huggingface-cache/hub` (Path to cached Hugging Face models)
-*   `DETECTOR_MODEL_CHECKPOINT`: `karlo0/surya_line_det_2.20`
-*   `LAYOUT_MODEL_CHECKPOINT`: `karlo0/surya_layout_multimodal`
-*   `FOUNDATION_MODEL_CHECKPOINT`: `karlo0/surya_text_recognition`
-*   `RECOGNITION_MODEL_CHECKPOINT`: `karlo0/surya_text_recognition`
-*   `TABLE_REC_MODEL_CHECKPOINT`: `karlo0/surya_tablerec`
-*   `OCR_ERROR_MODEL_CHECKPOINT`: `karlo0/tarun-menta_ocr_error_detection`
+- `MODEL_CACHE_DIR`: Set to `/v/huggingface-cache/hub`.
+- `*_MODEL_CHECKPOINT`: Specifies the Hugging Face IDs for the detector, layout, and recognition models.
+
+# Logic
+The file is a standard shell-compatible environment file. It is used by `docker run` via the `--env-file` flag in `test/run.sh`.
+
+# Goal
+The prompt file captures the specific model checkpoints and cache configuration required by the `surya` library for testing.
