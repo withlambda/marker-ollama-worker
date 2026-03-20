@@ -1,4 +1,6 @@
-# Marker-PDF with vLLM worker (For RunPod Serverless)
+# ToMarDo – To Markdown
+Use Marker-PDF with vLLM in a docker container to run on serverless GPU cloud instances.
+Current support is for serverless instance on runpod.io.
 
 This project provides a Dockerized solution for running `marker-pdf` with `vLLM` LLM support as a **RunPod Serverless Worker**. It is designed to process documents (PDF, DOCX, PPTX, etc.) on-demand, leveraging RunPod's GPU infrastructure.
 
