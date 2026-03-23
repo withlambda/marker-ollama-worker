@@ -99,10 +99,9 @@ handler_module = _import_handler_module()
 class TestHandlerImageDescriptionHelpers(unittest.TestCase):
     """Tests for image discovery and text-append helper functions."""
 
-    @classmethod
-    def setUpClass(cls) -> None:
+    def setUp(self) -> None:
         """Set up test configuration that mimics GlobalConfig."""
-        cls.app_config = types.SimpleNamespace(
+        self.app_config = types.SimpleNamespace(
             IMAGE_FILE_EXTENSIONS={".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"},
             FILE_ENCODING="utf-8",
             image_description_section_heading="## Extracted Image Descriptions",
