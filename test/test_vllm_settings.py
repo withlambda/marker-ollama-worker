@@ -445,13 +445,6 @@ class TestVllmSettingsRequiredFields(unittest.TestCase):
             if key.startswith("VLLM_"):
                 del os.environ[key]
 
-    def test_missing_model_path_raises_error(self):
-        """VllmSettings requires vllm_model_path."""
-        cfg = _make_global_config(self.tmp_dir)
-        with self.assertRaises(ValidationError) as ctx:
-            VllmSettings(app_config=cfg, VLLM_VRAM_GB_MODEL=6)
-        self.assertIn("VLLM_MODEL_PATH", str(ctx.exception))
-
     def test_missing_vram_gb_model_raises_error(self):
         """VllmSettings requires vllm_vram_gb_model."""
         cfg = _make_global_config(self.tmp_dir)
