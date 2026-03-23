@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -63,6 +62,7 @@ from utils import (
     check_no_subdirs,
     is_empty_dir,
     check_is_empty_dir,
+    clear_directory,
     setup_config,
     log_vram_usage
 )
@@ -523,9 +523,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     if not cleanup_output_dir:
         check_is_empty_dir(output_path)
     else:
-        if os.path.exists(output_path):
-            logger.info(f"Cleaning output directory: {output_path}")
-            shutil.rmtree(output_path)
+        clear_directory(output_path)
 
     os.makedirs(output_path, exist_ok=True)
 

@@ -21,6 +21,7 @@ and path validation utilities.
 
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Union
@@ -198,6 +199,30 @@ def check_is_empty_dir(path: Union[str, Path]) -> None:
     """
     if os.path.exists(path) and not is_empty_dir(path):
         raise ValueError(f"Directory '{path}' is not empty.")
+
+def clear_directory(path: Union[str, Path]) -> None:
+    """
+    Deletes all contents of a directory without removing the directory itself.
+
+    This is useful for cleaning up mounted volumes where removing the root
+    directory would fail with 'Device or resource busy'.
+
+    Args:
+        path (Union[str, Path]): Path to the directory to clear.
+    """
+    path = Path(path)
+    if not path.is_dir():
+        return
+
+    logger.info(f"Clearing contents of directory: {path}")
+    for item in path.iterdir():
+        try:
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+        except Exception as e:
+            logger.warning(f"Failed to delete {item} during directory cleanup: {e}")
 
 class TextProcessor:
     """
