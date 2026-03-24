@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/marker-ollama-worker.iml" filepath="$PROJECT_DIR$/.idea/marker-ollama-worker.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/MarkLLM.iml" filepath="$PROJECT_DIR$/.idea/MarkLLM.iml" />
     </modules>
   </component>
 </project>
