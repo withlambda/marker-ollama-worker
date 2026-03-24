@@ -26,7 +26,7 @@
 # Prerequisites:
 # - Docker installed and running.
 # - Python 3 installed.
-# - Access to Ollama models and Marker models (mounted via volumes).
+# - Access to vLLM-compatible models and Marker models (mounted via volumes).
 
 set -e
 
@@ -40,8 +40,7 @@ BUILD_TEST_DIR="${PARENT_OF_SCRIPT_DIR}/build/test"
 export TEST_INPUT_DIR="${BUILD_TEST_DIR}/test-data/input"
 export TEST_OUTPUT_DIR="${BUILD_TEST_DIR}/test-data/output"
 
-DOCKER_CONTAINER="marker-with-ollama-test"
-OLLAMA_MODEL="smollm:135m"
+DOCKER_CONTAINER="marker-with-vllm-test"
 
 rm -rf "${BUILD_TEST_DIR}" && mkdir -p "${BUILD_TEST_DIR}"
 
@@ -52,7 +51,7 @@ cp "${SCRIPT_DIR}"/*.txt \
   "${PARENT_OF_SCRIPT_DIR}/Dockerfile" \
   "${PARENT_OF_SCRIPT_DIR}/requirements.txt" \
   "${PARENT_OF_SCRIPT_DIR}/handler.py" \
-  "${PARENT_OF_SCRIPT_DIR}/ollama_worker.py" \
+  "${PARENT_OF_SCRIPT_DIR}/vllm_worker.py" \
   "${PARENT_OF_SCRIPT_DIR}/utils.py" \
   "${PARENT_OF_SCRIPT_DIR}/settings.py" \
   "${PARENT_OF_SCRIPT_DIR}/block_correction_prompts.json" "${BUILD_TEST_DIR}"
@@ -109,13 +108,14 @@ docker_run_cmd=()
 
 docker_run_cmd+=("docker run --rm")
 docker_run_cmd+=("--name ${DOCKER_CONTAINER}")
-docker_run_cmd+=("--shm-size=2gb")
+docker_run_cmd+=("--shm-size=4gb")
 docker_run_cmd+=("--env-file custom.env")
 docker_run_cmd+=("--env-file marker.env")
 #docker_run_cmd+=("--env-file surya.env")
 docker_run_cmd+=("--env-file tools.env")
-docker_run_cmd+=("-v ${HOME}/.ollama/:/v/.ollama/")
-##docker_run_cmd+=("-v ${PARENT_OF_SCRIPT_DIR}/models/huggingface:/v/huggingface-cache")
+docker_run_cmd+=("-e STRICT_MODE=True")
+#docker_run_cmd+=("-v /path/to/model/weights:/v/models")
+docker_run_cmd+=("-v ${PARENT_OF_SCRIPT_DIR}/models/huggingface:/v/huggingface-cache")
 docker_run_cmd+=("-v ${PARENT_OF_SCRIPT_DIR}/models/datalab:/app/cache/datalab")
 docker_run_cmd+=("-v ${TEST_INPUT_DIR}:/v/input")
 docker_run_cmd+=("-v ${TEST_OUTPUT_DIR}:/v/output")

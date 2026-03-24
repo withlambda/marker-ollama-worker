@@ -14,9 +14,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Main handler for the marker-ollama-worker.
+Main handler for the marker-vllm-worker.
 Orchestrates the conversion of documents using the marker-pdf library and
-optional post-processing using an Ollama-powered LLM.
+optional post-processing using a vLLM-powered LLM server.
 """
 
 import atexit
@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -35,14 +34,10 @@ import runpod
 import torch
 import torch.multiprocessing as mp
 
-# Ensure threads don't contend - important for multiprocessing
-os.environ["MKL_DYNAMIC"] = "FALSE"
-os.environ["OMP_DYNAMIC"] = "FALSE"
-os.environ["OMP_NUM_THREADS"] = "2"  # Avoid OpenMP issues with multiprocessing
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # Transformers uses .isin for a simple op, which is not supported on MPS
-os.environ["IN_STREAMLIT"] = "true"  # Avoid multiprocessing inside surya
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.config.parser import ConfigParser
+from marker.output import text_from_rendered
 
 # Set the multiprocessing start method early (required for CUDA)
 try:
@@ -51,18 +46,15 @@ except RuntimeError:
     # Already set, which is fine
     pass
 
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.config.parser import ConfigParser
-from marker.output import text_from_rendered
-from ollama_worker import OllamaWorker
-from settings import MarkerSettings, OllamaSettings, GlobalConfig
+from vllm_worker import VllmWorker
+from settings import MarkerSettings, VllmSettings, GlobalConfig
 from utils import (
     check_is_dir,
     check_is_not_file,
     check_no_subdirs,
     is_empty_dir,
     check_is_empty_dir,
+    clear_directory,
     setup_config,
     log_vram_usage
 )
@@ -100,10 +92,21 @@ def marker_worker_exit() -> None:
     """
     global _MARKER_MODELS
     try:
-        if _MARKER_MODELS:
+        if '_MARKER_MODELS' in globals() and _MARKER_MODELS:
+            # 1. Clear the dictionary explicitly
+            _MARKER_MODELS.clear()
             del _MARKER_MODELS
-            torch.cuda.empty_cache()
+
+            # 2. Force Python GC
             gc.collect()
+
+            # 3. Synchronize and clear CUDA
+            if torch.cuda.is_available():
+                torch.cuda.synchronize() # Wait for all kernels to finish
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+
+        logger.info(f"Worker {os.getpid()} cleaned up VRAM.")
     except Exception as e:
         logger.warning(f"Error during worker cleanup: {e}")
 
@@ -113,14 +116,22 @@ def calculate_optimal_marker_workers(
     marker_config: MarkerSettings,
 ) -> int:
     """
-    Calculates optimal marker worker counts based on workload and available VRAM.
+    Calculates the optimal number of marker worker processes based on
+    workload and available VRAM.
+
+    This function prevents GPU out-of-memory errors by ensuring that the
+    total VRAM reserved for marker processes (marker_workers * vram_gb_per_worker)
+    plus the system reserve (vram_gb_reserve) does not exceed the total
+    available GPU memory.
 
     Args:
-        num_files (int): Number of files to process
-        app_config (GlobalConfig): Global configuration settings
-        marker_config (MarkerSettings): Marker-specific configuration settings
+        num_files: The number of files in the current processing batch.
+        app_config: Global configuration containing total VRAM and reserve.
+        marker_config: Marker-specific settings (workers override, VRAM per worker).
+
     Returns:
-        int: optimal_marker_workers
+        The number of worker processes to instantiate, bounded by workload,
+        available VRAM, and a reasonable parallel processing limit (default: 4).
     """
     # Get VRAM configuration
 
@@ -174,19 +185,27 @@ def insert_image_descriptions_to_text_file(
     image_descriptions: List[Tuple[Path, str]]
 ) -> bool:
     """
-    Inserts generated image descriptions into a text output file at the position
-    where the image appears, or appends them to the end if the position cannot be found.
+    Inserts generated image descriptions into the converted document.
 
-    Only text-based output formats (.md, .txt) are processed. Non-text formats
-    (e.g., .json, .html) are skipped to avoid producing invalid syntax.
+    This method attempts to place descriptions immediately after their
+    corresponding image tags (e.g., Markdown images) within the file.
+    If the original image reference cannot be found, descriptions are
+    appended as a new section at the end of the file.
+
+    Constraints:
+        - Only text-based formats (.md, .txt) are supported to ensure the
+          Markdown-formatted descriptions do not corrupt structured outputs
+          like JSON or HTML.
+        - Descriptions are formatted as blockquotes with explicit start/end
+          markers for downstream clarity.
 
     Args:
-        app_config (GlobalConfig): Global configuration settings.
-        output_file_path (Path): Marker output text file.
-        image_descriptions (List[Tuple[Path, str]]): (image path, description) tuples.
+        app_config: The global application configuration.
+        output_file_path: Path to the main text-based output file.
+        image_descriptions: List of (image file path, description text) pairs.
 
     Returns:
-        bool: True when descriptions were inserted or appended, False otherwise.
+        True if the file was modified, False otherwise.
     """
     if not image_descriptions:
         return False
@@ -326,7 +345,7 @@ def marker_process_single_file(
     """
     global _MARKER_MODELS
     try:
-        logger.info(f"Converting {file_path.name}...")
+        logger.info(f"Converting {file_path.name} in process with pid {os.getpid()} ...")
 
         # Initialize converter using process-local models
         config_parser = ConfigParser(marker_config)
@@ -364,36 +383,35 @@ def marker_process_single_file(
         # Return False and None to allow other files in the pool to continue
         return False, None
 
-def extract_ollama_settings_from_job_input(
+def extract_vllm_settings_from_job_input(
     app_config: GlobalConfig,
     job_input: Dict[str, Any],
-) -> OllamaSettings:
+) -> VllmSettings:
     """
-    Extracts and validates Ollama-specific settings from the RunPod job input.
-    Filters keys starting with 'ollama_' and uses them to instantiate OllamaSettings.
+    Extracts and validates vLLM-specific settings from the RunPod job input.
+    Filters keys starting with 'vllm_' and uses them to instantiate VllmSettings.
 
     Args:
         app_config (GlobalConfig): The global configuration settings.
         job_input (Dict[str, Any]): The raw input dictionary from the RunPod job.
 
     Returns:
-        OllamaSettings: A validated configuration object for Ollama.
+        VllmSettings: A validated configuration object for vLLM.
     """
-    # Valid OllamaSettings field names (check via model_fields)
-    valid_ollama_fields = set(OllamaSettings.model_fields.keys())
+    # Valid VllmSettings field names (check via model_fields)
+    valid_vllm_fields = set(VllmSettings.model_fields.keys())
 
-    ollama_input = {}
+    vllm_input = {}
     for k, v in job_input.items():
-        if k.startswith("ollama_"):
-            field_name = k[len("ollama_"):]
-            if field_name not in valid_ollama_fields:
+        if k.startswith("vllm_"):
+            if k not in valid_vllm_fields:
                 logger.warning(
-                    f"Unknown ollama setting '{k}' in job input. "
-                    f"Valid fields: {sorted(valid_ollama_fields)}"
+                    f"Unknown vllm setting '{k}' in job input. "
+                    f"Valid fields: {sorted(valid_vllm_fields)}"
                 )
-            ollama_input[field_name] = v
+            vllm_input[k] = v
 
-    return OllamaSettings(app_config, **ollama_input)
+    return VllmSettings(app_config, **vllm_input)
 
 def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerSettings:
     """
@@ -426,28 +444,30 @@ def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerS
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """
-    RunPod Serverless Handler for document conversion using marker-pdf and Ollama.
+    RunPod Serverless Handler for document conversion using marker-pdf and vLLM.
 
     This function executes the following workflow:
     1.  Initialization: Loads global configuration and initializes VRAM logging.
-    2.  Settings Extraction: Parses Ollama and Marker-specific settings from the job input.
-    3.  Ollama Setup: If LLM post-processing is enabled, it initializes the Ollama worker
-        and ensures the required model is loaded.
+    2.  Settings Extraction: Parses vLLM and Marker-specific settings from the job input.
+    3.  vLLM Setup: If LLM post-processing is enabled, initializes the VllmWorker.
     4.  Path Validation: Resolves and validates input and output directories.
     5.  Resource Calculation: Determines the optimal number of worker processes based on
         available VRAM and the number of files to process.
     6.  Batch Processing: Uses a multiprocessing pool to convert files in parallel:
         -   Each worker process loads its own copy of marker models.
         -   Individual file failures are caught and logged, allowing the batch to continue.
-    7.  LLM Post-processing (Optional): If enabled, processes the converted text through
-        the Ollama model for OCR error correction and image descriptions.
+    7.  LLM Post-processing (Optional): If enabled, starts the vLLM server as a subprocess
+        and processes the converted text through the model for OCR error correction and image descriptions.
     8.  Cleanup: Deletes input files if requested and returns a summary of the operation.
 
     Args:
         job (Dict[str, Any]): The RunPod job object containing 'input' parameters.
 
     Returns:
-        Dict[str, Any]: A result dictionary with 'status' and a summary message.
+        Dict[str, Any]: A result dictionary containing:
+            - status: 'success', 'completed', or 'partially_completed'.
+            - message: Summary description of the operation outcome.
+            - failures: List of filenames that failed post-processing (if status is 'partially_completed').
     """
 
     # --- Configuration and Environment Setup ---
@@ -459,17 +479,16 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     job_input = job.get("input", {})
 
     # Extract structured settings
-    ollama_settings = extract_ollama_settings_from_job_input(app_config=app_config, job_input=job_input)
+    vllm_settings: Optional[VllmSettings] = None
+    if app_config.use_postprocess_llm:
+        vllm_settings = extract_vllm_settings_from_job_input(app_config=app_config, job_input=job_input)
     marker_settings = extract_marker_settings_from_job_input(job_input=job_input)
 
-    ollama_worker: Optional[OllamaWorker] = None
+    vllm_worker: Optional[VllmWorker] = None
 
-    # --- 1. Ollama Model Setup (Pre-processing) ---
-    if app_config.use_postprocess_llm:
-        ollama_worker = OllamaWorker(settings=ollama_settings)
-        ollama_worker.initialize_model()
-        torch.cuda.empty_cache()
-        log_vram_usage("After initialize_model")
+    # --- 1. vLLM Worker Setup (Pre-processing) ---
+    if app_config.use_postprocess_llm and vllm_settings:
+        vllm_worker = VllmWorker(settings=vllm_settings)
 
     # Read base paths from global config
     storage_bucket_path = app_config.volume_root_mount_path
@@ -509,9 +528,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     if not cleanup_output_dir:
         check_is_empty_dir(output_path)
     else:
-        if os.path.exists(output_path):
-            logger.info(f"Cleaning output directory: {output_path}")
-            shutil.rmtree(output_path)
+        clear_directory(output_path)
 
     os.makedirs(output_path, exist_ok=True)
 
@@ -553,8 +570,13 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         marker_config=marker_settings,
     )
 
+    maxtasksperchild_rendered = marker_settings.maxtasksperchild if marker_settings.maxtasksperchild is not None \
+        else 'unlimited'
+
     # --- Execute Marker Processing ---
-    logger.info(f"Starting conversion for {len(files_to_process)} files...")
+    logger.info(f"Starting conversion for {len(files_to_process)} files "
+                f"with marker using {optimal_marker_workers} workers "
+                f"and {maxtasksperchild_rendered} max tasks per worker...")
     start_time = time.time()
     processed_files = [] # Paths of successfully processed output files
     successful_inputs = [] # Original paths of successfully processed files
@@ -573,7 +595,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             maxtasksperchild=marker_settings.maxtasksperchild  # Recycle workers periodically to free VRAM
         ) as pool:
             # Process files and collect results
-            results = pool.starmap(marker_process_single_file, task_args)
+            results = pool.starmap(marker_process_single_file, task_args, chunksize=1)
 
             # Separate successful results from failed ones
             for idx, (success, output_file_path) in enumerate(results):
@@ -583,6 +605,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
         end_time = time.time()
         logger.info(f"Marker execution took: {end_time - start_time:.2f} seconds")
+        gc.collect()
         torch.cuda.empty_cache()
         log_vram_usage("After Marker")
 
@@ -593,35 +616,40 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info("Marker Processing completed")
 
-    # --- 3. Ollama LLM Post-processing (Parallel) ---
-    if app_config.use_postprocess_llm and ollama_worker and processed_files:
+    # --- 3. vLLM LLM Post-processing (Parallel) ---
+    failed_post_processing = []
+    if app_config.use_postprocess_llm and vllm_worker and processed_files:
         # Note: Marker worker processes have terminated, releasing their VRAM
-        # Ollama now has full access to VRAM
-        log_vram_usage("Before starting Ollama server")
+        # vLLM now has full access to VRAM
+        log_vram_usage("Before starting vLLM server")
 
-        logger.info("--- Starting Ollama for Post-processing ---")
+        logger.info("--- Starting vLLM for Post-processing ---")
 
         try:
-            # Use OllamaWorker context manager to start and ensure the model
-            with ollama_worker:
-                logger.info(f"Post-processing {len(processed_files)} files with {ollama_settings.chunk_workers} chunk workers...")
+            # Use VllmWorker context manager to start the server and wait for readiness
+            with vllm_worker:
+                logger.info(f"Post-processing {len(processed_files)} files with {vllm_settings.vllm_chunk_workers} chunk workers...")
 
                 # Process files sequentially, with parallel chunk processing within each file
                 for processed_file_path in processed_files:
-                    ollama_worker.process_file(
+                    success = vllm_worker.process_file(
                         file_path=processed_file_path,
-                        prompt_template=ollama_settings.block_correction_prompt,
-                        max_chunk_workers=ollama_settings.chunk_workers
+                        prompt_template=vllm_settings.vllm_block_correction_prompt,
+                        max_chunk_workers=vllm_settings.vllm_chunk_workers
                     )
+
+                    if not success:
+                        failed_post_processing.append(processed_file_path.name)
+                        continue
 
                     extracted_images = list_extracted_images_for_output_file(app_config, processed_file_path)
                     if not extracted_images:
                         continue
 
-                    image_descriptions = ollama_worker.describe_images(
+                    image_descriptions = vllm_worker.describe_images(
                         image_paths=extracted_images,
-                        prompt_template=ollama_settings.image_description_prompt,
-                        max_image_workers=ollama_settings.chunk_workers
+                        prompt_template=vllm_settings.vllm_image_description_prompt,
+                        max_image_workers=vllm_settings.vllm_chunk_workers
                     )
 
                     inserted_descriptions = insert_image_descriptions_to_text_file(
@@ -638,10 +666,14 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             log_vram_usage("Final")
 
         except Exception as e:
-            logger.error(f"Error during Ollama post-processing phase: {e}")
-            if ollama_worker:
-                ollama_worker.stop_server()
-            raise
+            logger.error(f"Critical error during vLLM post-processing phase: {e}")
+            # If the vLLM phase fails critically, we still return the Marker results
+            # but with a partially_completed status and error message.
+            return {
+                "status": "partially_completed",
+                "message": f"Marker succeeded, but vLLM phase failed critically: {e}",
+                "failures": failed_post_processing if failed_post_processing else ["vLLM_phase_crash"]
+            }
 
     # Cleanup: Delete the original file on success
     # Only delete it if we reached here successfully and delete_input_on_success is enabled
@@ -654,8 +686,9 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
                 logger.warning(f"Failed to delete input file {file_to_process}: {e}")
 
     return {
-        "status": "completed",
-        "message": f"All input files of {input_path} processed."
+        "status": "completed" if not failed_post_processing else "partially_completed",
+        "message": f"All {len(processed_files)} input files of {input_path.absolute()} were processed successfully.",
+        "failures": failed_post_processing if failed_post_processing else None
     }
 
 if __name__ == "__main__":

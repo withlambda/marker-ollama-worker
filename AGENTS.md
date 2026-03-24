@@ -26,43 +26,44 @@ When generating or modifying code, the agent must ensure that:
 4.  **Project Documentation**:
     - The `README.md` file must be kept up-to-date with every significant change.
     - It should clearly state the project's purpose, installation steps, usage instructions, and deployment details.
-    - When executing prompts that modify the system's behavior or configuration, the agent must review and update `README.md` to reflect these changes.
+    - When implementing changes that modify the system's behavior or configuration, the agent must review and update `README.md` to reflect these changes.
     - **Verification**: Before writing to `README.md`, re-read the current file content to ensure no manual edits (e.g., specific configuration values, notes, or section removals) are lost in the update.
 
 ## Custom Commands
 
-### `/exec-prompt <prompt_name>`
-When the user issues the command `/exec-prompt <prompt_name>`, the agent must:
-1.  Locate the file `prompt/<prompt_name>.md` in the project.
-2.  Read the content of that file.
-3.  Execute the instructions contained within that file as if they were sent directly in the chat.
+### `/plan <feature-name> <feature-description>`
+When the user issues the command `/plan <feature-name> <feature-description>`, the agent must:
+1.  **Initialization**: Create a directory `plans/<feature-name>/`.
+2.  **Analysis**: Analyze the current codebase to identify the files and logic relevant to the `<feature-description>`.
+3.  **Requirements**: Create `plans/<feature-name>/requirements.md` that details:
+    -   All functional and non-functional requirements.
+    -   Edge cases and potential pitfalls.
+    -   Definition of Done (success criteria).
+4.  **Design**: Create `plans/<feature-name>/design.md` that describes:
+    -   High-level architecture and data flow.
+    -   List of modified and new files.
+    -   Required changes to APIs, schemas, or dependencies.
+5.  **Tasks**: Create `plans/<feature-name>/tasks.md` with a structured, numbered list of implementation tasks, including specific testing requirements for each.
 
-### `/refine-prompt <prompt_name>`
-When the user issues the command `/refine-prompt <prompt_name>`, the agent must:
-1.  Locate the file `prompt/<prompt_name>.md` in the project.
-2.  Read the content of that file.
-3.  Analyze the prompt for clarity, consistency, and effectiveness.
-4.  Rewrite the content of `prompt/<prompt_name>.md` with a refined version that is optimized for execution by an LLM agent.
+### `/review-plan <feature-name>`
+When the user issues the command `/review-plan <feature-name>`, the agent must:
+1.  **Validation**: Read all files in the `plans/<feature-name>/` directory.
+2.  **Evaluation**: Analyze the plan for ambiguities, inconsistencies, and alignment with project standards.
+3.  **Feasibility**: Cross-reference the plan with the current codebase to ensure technical feasibility.
+4.  **Critique**: Provide a detailed list of suggestions, missing details, or potential improvements.
+5.  **Refinement**: If the user provides feedback or instructions, update the planning files accordingly.
 
-### `/refine-prompts`
-When the user issues the command `/refine-prompts`, the agent must:
-1.  List all files in the `prompt` directory.
-2.  Iterate through each file (excluding `README.md` or other non-prompt files).
-3.  Perform the actions defined in `/refine-prompt` for each file.
-
-### `/review-prompt <prompt_name>`
-When the user issues the command `/review-prompt <prompt_name>`, the agent must:
-1.  Locate the file `prompt/<prompt_name>.md` in the project.
-2.  Read the content of that file.
-3.  Analyze the prompt to identify ambiguities, missing information, or potential issues.
-4.  Report these findings to the user as a list of open questions or suggestions for improvement, without modifying the file itself.
-
-### `/execute-prompts`
-When the user issues the command `/execute-prompts`, the agent must:
-1.  List all files in the `prompt` directory.
-2.  Determine the optimal execution order based on dependencies (e.g., source code must exist before tests can be run).
-3.  Iterate through the ordered list of files (excluding `README.md`).
-4.  Perform the actions defined in `/exec-prompt` for each file.
+### `/execute-plan <feature-name>`
+When the user issues the command `/execute-plan <feature-name>`, the agent must:
+1.  **Verification**: Check if the feature is already implemented by looking for `plans/<feature-name>/IMPLEMENTED.md`. If it exists, inform the user and abort.
+2.  **Execution**: Follow the tasks in `plans/<feature-name>/tasks.md` sequentially.
+3.  **Testing**: Implement and run tests for each task as specified in the plan.
+4.  **Final Validation**: Once all tasks are complete, run the full test suite to ensure everything works correctly and meets the success criteria in `requirements.md`.
+5.  **Completion**: Create a file `plans/<feature-name>/IMPLEMENTED.md` that includes:
+    -   A summary of the final implementation.
+    -   A list of all new and modified files.
+    -   Any deviations from the original plan and why they occurred.
+6.  **Cleanup**: Update `README.md` to reflect the new feature if applicable.
 
 ### `/review-code`
 When the user issues the command `/review-code`, the agent must:
@@ -71,18 +72,6 @@ When the user issues the command `/review-code`, the agent must:
 3.  Apply fixes and improvements directly to the files, ensuring that the changes are well-documented and follow the project's coding standards.
 4.  Update `README.md` if any changes affect the usage or configuration of the project.
 
-### `/sync-prompts`
-When the user issues the command `/sync-prompts`, the agent must:
-1.  **Inventory**: Identify all source code files (e.g., `.py`, `.sh`, `Dockerfile`, `.yml`, `.env`) in the project, excluding `.git`, `__pycache__`, and `build` directories.
-2.  **Cleanup**: Identify any files in the `prompt/` directory that no longer have a corresponding source file and delete them.
-3.  **Generate/Update**: For each source file, create or update its corresponding prompt file (naming convention: `prompt/<path_to_file_with_underscores>.md`).
-4.  **Content Requirements**:
-    -   **Do not** simply copy-paste the source code as the primary instruction.
-    -   **Context**: Describe the file's purpose and location.
-    -   **Interface**: Define classes, functions, inputs, outputs, and environment variables.
-    -   **Logic**: Describe the internal logic, algorithms, and error handling in detailed Natural Language or Pseudocode.
-    -   **Exceptions**: You MAY include code blocks for critical constants, complex regex, or configuration file content (like `Dockerfile`) if exact reproduction is impossible via description alone.
-5.  **Goal**: The content of the prompt file must be sufficient for an LLM to regenerate the source file exactly as it behaves now.
 
 ### `/add-src-docs`
 When the user issues the command `/add-src-docs`, the agent must:
@@ -125,7 +114,7 @@ When the user issues the command `/review-all`, the agent must:
     -   `/update-src-docs`: Synchronize inline documentation (docstrings, comments) with updated code logic
     -   `/add-src-docs`: Ensure all new or modified functions, classes, and modules have complete documentation
     -   Update test files to match any changes in function signatures or behavior
-    -   Update configuration documentation (e.g., `prompt/settings.md`) if settings changed
+    -   Update configuration documentation if settings changed
 5.  **Update project documentation**:
     -   `/update-readme`: Ensure README.md reflects all implemented changes, new features, or configuration options
     -   Update any relevant sections (usage, configuration, environment variables, troubleshooting)

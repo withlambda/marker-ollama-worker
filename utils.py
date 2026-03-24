@@ -14,13 +14,14 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Utility functions and classes for the marker-ollama-worker.
+Utility functions and classes for the marker-vllm-worker.
 Includes environment configuration, resource management (VRAM),
 and path validation utilities.
 """
 
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Union
@@ -35,8 +36,8 @@ def setup_config() -> GlobalConfig:
 
     This function:
     1. Instantiates GlobalConfig, which performs Pydantic validation of environment variables.
-    2. Ensures that directories for Ollama models, logs, and Hugging Face cache exist.
-    3. Sets environment variables for downstream libraries (Ollama, HF).
+    2. Ensures that directories for Hugging Face cache exist.
+    3. Sets environment variables for downstream libraries (HF).
     4. Handles ownership and permission updates if running as root.
     5. Validates additional model-related configuration for post-processing.
 
@@ -55,16 +56,12 @@ def setup_config() -> GlobalConfig:
 
     if config.use_postprocess_llm:
         # Ensure directories exist
-        os.makedirs(config.ollama_models, exist_ok=True)
-        os.makedirs(config.ollama_log_dir, exist_ok=True)
         os.makedirs(config.hf_home, exist_ok=True)
         # Ownership/Permissions (if root)
         # Note: This assumes Linux/Docker environment where UID 0 is root
         # This is required to allow non-root user (appuser) to access mounted volumes
         if os.getuid() == 0:
             _update_ownership(
-                str(config.ollama_models),
-                str(config.ollama_log_dir),
                 str(config.hf_home)
             )
 
@@ -202,6 +199,30 @@ def check_is_empty_dir(path: Union[str, Path]) -> None:
     """
     if os.path.exists(path) and not is_empty_dir(path):
         raise ValueError(f"Directory '{path}' is not empty.")
+
+def clear_directory(path: Union[str, Path]) -> None:
+    """
+    Deletes all contents of a directory without removing the directory itself.
+
+    This is useful for cleaning up mounted volumes where removing the root
+    directory would fail with 'Device or resource busy'.
+
+    Args:
+        path (Union[str, Path]): Path to the directory to clear.
+    """
+    path = Path(path)
+    if not path.is_dir():
+        return
+
+    logger.info(f"Clearing contents of directory: {path}")
+    for item in path.iterdir():
+        try:
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+        except Exception as e:
+            logger.warning(f"Failed to delete {item} during directory cleanup: {e}")
 
 class TextProcessor:
     """

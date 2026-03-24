@@ -16,11 +16,20 @@
 import sys
 import os
 import json
-import time
 from pathlib import Path
 
 # Add the root directory to sys.path to import handler
-sys.path.append("/")
+# In Docker, test-handler.py might be in the same directory as handler.py
+# Locally, it's usually in a test/ subdirectory.
+current_dir = Path(__file__).resolve().parent
+if (current_dir / "handler.py").exists():
+    PROJECT_ROOT = current_dir
+else:
+    PROJECT_ROOT = current_dir.parent
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 
 # Mock the runpod module to avoid starting the serverless loop
 import runpod
@@ -55,7 +64,7 @@ def test_handler() -> None:
             "input_dir": input_dir, # Process the entire input directory
             "output_dir": output_dir,
             "marker_workers": 1,
-            "ollama_chunk_workers": 1,
+            "vllm_chunk_workers": 1,
             "marker_paginate_output": True,
             "marker_force_ocr": False,
             "marker_disable_multiprocessing": True
@@ -76,7 +85,8 @@ def test_handler() -> None:
         input_path = storage_bucket_path / input_dir
 
         if result.get("status") == "completed" \
-            and result.get("message") == f"All input files of {input_path} processed.":
+            and result.get("message") == f"All {sum(1 for _ in input_path.glob('*'))} input files of {input_path.absolute()} were processed successfully." \
+            and result.get("failures") is None:
             print("\nSUCCESS: Handler completed successfully.")
 
         else:

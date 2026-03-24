@@ -1,16 +1,19 @@
-# Marker-PDF with Ollama worker (For RunPod Serverless)
+# MarkLLM - Marker-PDF + vLLM
+Use Marker-PDF with vLLM in a docker container to run on serverless GPU cloud instances.
+Current support is for serverless instance on runpod.io.
 
-This project provides a Dockerized solution for running `marker-pdf` with `Ollama` LLM support as a **RunPod Serverless Worker**. It is designed to process documents (PDF, DOCX, PPTX, etc.) on-demand, leveraging RunPod's GPU infrastructure.
+This project provides a Dockerized solution for running `marker-pdf` with `vLLM` LLM support as a **RunPod Serverless Worker**. It is designed to process documents (PDF, DOCX, PPTX, etc.) on-demand, leveraging RunPod's GPU infrastructure.
 
 ## Architecture
 
 The container runs a Python handler script that listens for jobs from the RunPod API. When a job is received, it:
-1.  **Model Setup**:
-    *   If `OLLAMA_MODEL` is set, it checks if the model exists locally (pulling it from the Ollama registry if necessary).
-    *   If `OLLAMA_MODEL` is *not* set, it attempts to **build** an Ollama model from a cached Hugging Face GGUF file (specified by `OLLAMA_HUGGING_FACE_MODEL_NAME` and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION`).
-2.  **Processing**: Processes the specified input directory using `marker-pdf` (and `marker` for other formats).
+1.  **Marker Phase**: Processes the specified input directory using `marker-pdf` for document conversion (OCR, layout detection, etc.).
+2.  **vLLM Phase**: If LLM post-processing is enabled, starts a vLLM server subprocess, waits for readiness via health-check polling, and processes converted text through the model for OCR error correction and image descriptions.
 3.  **Cleanup**: Deletes the input file upon successful processing (optional).
-4.  **Result**: Returns the result (status, processed files, errors).
+4.  **Result**: Returns the result:
+    -   `status`: `completed`, `partially_completed` (if some files failed post-processing), or `success` (if no files were found).
+    -   `message`: A summary description of the outcome.
+    -   `failures`: (Optional) A list of filenames that failed during the vLLM post-processing phase. In the event of a critical vLLM server failure, this will contain the specific error message to help diagnostics.
 
 ### Process Architecture
 
@@ -23,19 +26,21 @@ There are typically two processes named `python3 -u handler.py`. This is standar
 
 This dual-process architecture provides isolation; the supervisor remains responsive even if a worker process encounters a critical failure (like a segfault or Out-of-Memory error). Both processes share the same command name because they are initialized using the `spawn` start method, which is required for safe CUDA operations.
 
-#### Ollama Processes
-When LLM post-processing is enabled, you will see two `ollama` processes:
-*   **Ollama Server**: This is the main orchestrator (`ollama serve`) that manages model loading and provides the API.
-*   **Ollama Runner**: This is a child process spawned by the server to perform the actual inference. It typically has a larger memory footprint (RES) as it contains the model weights in VRAM (or RAM if falling back to CPU).
-
-**Note:** If you see an `ollama` process with extremely high CPU usage (e.g., > 1000%), it usually indicates that the model is running on the CPU instead of the GPU. This worker includes the necessary GPU runners to avoid this, but it may still happen if VRAM is insufficient.
+#### vLLM Process
+When LLM post-processing is enabled, the handler spawns a vLLM server subprocess (`vllm serve`):
+*   The server is started after Marker processing completes and VRAM is freed.
+*   A health-check endpoint (`GET /health`) is polled until the server is ready.
+*   Communication uses the OpenAI-compatible API via the `openai` Python client.
+*   After all post-processing is complete, the server is gracefully shut down (SIGTERM → wait 10s → SIGKILL).
+*   If the server crashes mid-processing, one automatic restart is attempted before failing the job.
 
 ## Features
 
 *   **Serverless Worker**: Fully compatible with RunPod Serverless.
 *   **Multi-Format Support**: Supports `.pdf`, `.pptx`, `.docx`, `.xlsx`, `.html`, and `.epub`.
-*   **Ollama Integration**: Leverages a local Ollama instance for enhanced OCR and conversion.
-*   **Offline/Cached Models**: Can build Ollama models dynamically from a mounted Hugging Face cache, avoiding repeated network downloads.
+*   **vLLM Integration**: Leverages a local vLLM server subprocess for high-performance LLM inference via an OpenAI-compatible API.
+*   **Token Precision**: Integrates `tiktoken` for accurate context window utilization during text chunking.
+*   **Local Model Weights**: Loads models directly from a local directory (`VLLM_MODEL_PATH`), avoiding runtime downloads.
 *   **NVIDIA Optimized**: Uses the official `pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime` base image for maximum GPU performance.
 *   **Configurable**: Job inputs can override default environment variables.
 
@@ -43,28 +48,18 @@ When LLM post-processing is enabled, you will see two `ollama` processes:
 
 The worker is designed to maximize GPU utilization while avoiding Out-of-Memory (OOM) errors. It follows a two-phase processing model:
 1.  **Marker Phase**: Documents are converted to the target format. Marker models (Surya, etc.) are loaded into VRAM.
-2.  **Ollama Phase**: If post-processing is enabled, Marker models are moved to CPU and the CUDA cache is cleared to provide Ollama with full access to the VRAM.
+2.  **vLLM Phase**: After Marker completes, CUDA cache is cleared and a configurable VRAM recovery delay (`VLLM_VRAM_RECOVERY_DELAY`) ensures GPU memory is fully released before vLLM starts.
 
-This ensures that Ollama can load large LLMs into VRAM even if the Marker models previously consumed most of the available memory. For the next job, Marker models are moved back to GPU as needed.
+The vLLM worker implements robust error handling, including exponential backoff and automatic server restarts, for both text correction and image description tasks.
+
+This sequential execution model ensures that vLLM has full access to VRAM for loading and serving the LLM.
 
 ### Troubleshooting GPU Usage
 
-If you suspect Ollama is running on RAM (CPU) instead of VRAM (GPU), check the following:
-
-1.  **VRAM Logs**: Look for `VRAM Usage (After Marker)` in the worker logs. If `Free` memory is low (e.g., < 2GB) before Ollama starts, it may fallback to CPU. The current version of this worker automatically frees up VRAM before Ollama starts.
-2.  **Ollama Debugging**: Set the environment variable `OLLAMA_DEBUG=1`. This will log detailed information from the Ollama server to the container's standard output (and `ollama.log`), including which layers were loaded onto the GPU.
-3.  **Model Size**: Ensure your chosen model fits in the available VRAM. A 7B model usually requires ~5-8GB depending on quantization.
-4.  **GPU Visibility**: Check the `Environment Info` section at the start of the logs to verify that `CUDA_VISIBLE_DEVICES` is correctly set and `nvidia-smi` is accessible.
-
-### Troubleshooting Ollama 500 Errors / Runner Crashes
-
-Ollama has problems with certain vision-enabled models when they
-were built from GGUF files. The Ollama server answers with 500 status code responses.
-To fix this, try to create the model from Safetensors weights in case
-you have access to them.
-The specific error appears also in the Ollama server logs shows a `GGML_ASSERT` failure like
-`(n_outputs_prev + n_outputs)*n_embd <= (int64_t) embd_size` followed by `SIGABRT` and
-`llama runner terminated` with `exit status 2`.
+1.  **VRAM Logs**: Look for `VRAM Usage (After Marker)` in the worker logs. If `Free` memory is low (e.g., < 2GB) before vLLM starts, increase `VLLM_VRAM_RECOVERY_DELAY` or reduce `VLLM_GPU_UTIL`.
+2.  **Model Size**: Ensure your chosen model fits in the available VRAM with the configured `VLLM_GPU_UTIL` fraction. A 7B model usually requires ~5-8GB depending on quantization.
+3.  **GPU Visibility**: Check the `Environment Info` section at the start of the logs to verify that `CUDA_VISIBLE_DEVICES` is correctly set and `nvidia-smi` is accessible.
+4.  **vLLM Server Logs**: The vLLM subprocess stdout/stderr is captured and logged. Check for OOM errors or CUDA-related failures in the worker logs.
 
 ## Prerequisites
 
@@ -75,38 +70,29 @@ The specific error appears also in the Ollama server logs shows a `GGML_ASSERT` 
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/your-username/marker-ollama-worker.git
-    cd marker-ollama-worker
+    git clone https://github.com/your-username/marker-vllm-worker.git
+    cd marker-vllm-worker
     ```
 
 2.  Build the Docker image:
     ```bash
-    docker build -t marker-ollama-worker .
+    docker build -t marker-vllm-worker .
     ```
+
+    *Note:* The build uses the `--use-deprecated=legacy-resolver` pip flag to handle a dependency conflict between `marker-pdf` 1.10.2 (which requires `openai < 2.0.0`) and the requested `openai` 2.29.0 (required for `vllm` 0.17.1).
 
 3.  Push the image to a container registry (e.g., Docker Hub, GHCR).
 
 ## Model Management
 
-### Ollama model
+### vLLM Model
 
-This worker supports two primary methods for managing Ollama models, with a resilient fallback strategy:
+vLLM loads model weights directly from a local directory specified by `VLLM_MODEL_PATH`. The model name for API calls is either set explicitly via `VLLM_MODEL` or derived automatically from the directory name.
 
-#### 1. Resilient Pull & Build (Automatic)
-The worker implements a multi-step discovery strategy for the model specified by `OLLAMA_MODEL`:
-1.  **Check Local**: It first checks if the model is already present in the local Ollama registry.
-2.  **Pull**: If not found, it attempts to pull the model from the Ollama registry.
-3.  **Fallback to Build**: If the pull fails (e.g., private model or registry issue) AND the Hugging Face configuration is provided (`OLLAMA_HUGGING_FACE_MODEL_NAME` and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION`), it will automatically attempt to **build** the model from your local Hugging Face cache.
-
-This ensures that once a model is specified, the worker will do its best to make it available using all configured sources.
-
-#### 2. Direct Build from Hugging Face Cache (Offline/Mounted)
-If you wish to skip the registry pull entirely and always build from your HF cache, ensure `OLLAMA_MODEL` is unset while providing the HF-specific variables.
-
-For the build process to work:
-- `OLLAMA_HUGGING_FACE_MODEL_NAME` (e.g., `Qwen/Qwen2.5-VL-3B-Instruct-GGUF`) and `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` (e.g., `Q4_K_M`) must be set.
-- The Hugging Face cache must be mounted under the path specified by `HF_HOME`.
-- The worker will identify the GGUF file and create the Ollama model before starting the processing phase.
+For the model to work:
+- `VLLM_MODEL_PATH` must point to a directory containing the model weights (e.g., SafeTensors format).
+- The model must fit within the available VRAM (controlled by `VLLM_GPU_UTIL` and `VLLM_VRAM_GB_MODEL`).
+- The Hugging Face cache should be mounted under the path specified by `HF_HOME` for any tokenizer or config files.
 
 ### Marker/Surya internal models
 
@@ -148,7 +134,7 @@ To populate your volume with models, use the utilities provided in `config/downl
 ### RunPod Deployment
 
 1.  **Create a Template**: In RunPod, create a new Serverless Template.
-    *   **Image Name**: Your pushed image (e.g., `ghcr.io/your-username/marker-ollama-worker:latest`).
+    *   **Image Name**: Your pushed image (e.g., `ghcr.io/your-username/marker-vllm-worker:latest`).
     *   **Container Disk Size**: 20GB (recommended).
     *   **Environment Variables**: Set defaults (see below).
 
@@ -158,7 +144,7 @@ To populate your volume with models, use the utilities provided in `config/downl
 
 You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are required fields. `input_dir` must be a directory containing the files to process.
 
-**Note on Ollama Configuration:** Any configuration variable for the Ollama worker can be overridden in the job input by prefixing it with `ollama_`. For example, `ollama_context_length` overrides `OLLAMA_CONTEXT_LENGTH`. See the [Ollama Configuration](#ollama-configuration-overrides) section for a full list of supported keys.
+**Note on vLLM Configuration:** Any configuration variable for the vLLM worker can be overridden in the job input by prefixing it with `vllm_`. For example, `vllm_chunk_size` overrides `VLLM_CHUNK_SIZE`. See the [vLLM Configuration](#vllm-configuration-overrides) section for a full list of supported keys.
 
 ```json
 {
@@ -174,9 +160,9 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
     "marker_page_range": "0-10",
     "marker_processors": "marker.processors.images.ImageProcessor",
     "delete_input_on_success": false,
-    "ollama_block_correction_prompt": "Optional custom prompt",
-    "ollama_chunk_workers": 2,
-    "ollama_image_description_prompt": "Optional custom prompt for image descriptions"
+    "vllm_block_correction_prompt": "Optional custom prompt",
+    "vllm_chunk_workers": 2,
+    "vllm_image_description_prompt": "Optional custom prompt for image descriptions"
   }
 }
 ```
@@ -190,10 +176,10 @@ You can trigger the worker with a JSON payload. `input_dir` and `output_dir` are
 
 #### LLM Post-Processing Parameters
 
-*   `ollama_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM. Takes priority over `block_correction_prompt_key`.
-*   `block_correction_prompt_key`: (Optional) A key referencing a predefined prompt from the [Block Correction Prompt Catalog](#block-correction-prompt-catalog). Ignored if `ollama_block_correction_prompt` is provided.
-*   `ollama_chunk_workers`: (Optional) Number of parallel workers for chunk processing and image description generation. Default: 16, but automatically capped to `OLLAMA_NUM_PARALLEL` to prevent server overload.
-*   `ollama_image_description_prompt`: (Optional) Custom prompt for extracted image descriptions. If omitted, a built-in factual vision prompt is used.
+*   `vllm_block_correction_prompt`: (Optional) A custom prompt string to use for block correction with the LLM. Takes priority over `vllm_block_correction_prompt_key`.
+*   `vllm_block_correction_prompt_key`: (Optional) A key referencing a predefined prompt from the [Block Correction Prompt Catalog](#block-correction-prompt-catalog). Ignored if `vllm_block_correction_prompt` is provided.
+*   `vllm_chunk_workers`: (Optional) Number of parallel async tasks for chunk processing and image description generation. Default: 16.
+*   `vllm_image_description_prompt`: (Optional) Custom prompt for extracted image descriptions. If omitted, a built-in book scan analysis prompt is used.
 
 When marker image extraction is enabled, the LLM post-processing phase also describes each extracted image and inserts the descriptions directly into text outputs (`.md`/`.txt`), ideally placed immediately following their corresponding image tags. To ensure clarity for LLMs like NotebookLM or AnythingLM, these descriptions are wrapped in explicit `[BEGIN IMAGE DESCRIPTION]` and `[END IMAGE DESCRIPTION]` markers. If a matching tag cannot be found, the descriptions are appended as a fallback section at the end of the file. Non-text outputs are left unchanged.
 
@@ -212,30 +198,29 @@ The following `marker_`-prefixed keys can be used in the `input` section of the 
 | `marker_processors`               | Comma-separated list of marker processors to run.               | `None`     |
 | `marker_output_format`            | The format of the output (markdown, json, etc.).                | `markdown` |
 | `marker_maxtasksperchild`         | Tasks per worker before recycling (prevents memory leaks).      | `10`       |
+| `marker_disable_maxtasksperchild` | Disable automatic recycling of tasks for the child process.     | `false`    |
 
-#### Ollama Configuration Overrides
+#### vLLM Configuration Overrides
 
-The following `ollama_`-prefixed keys can be used in the `input` section of the job payload to override server and client settings for a specific job:
+The following `vllm_`-prefixed keys can be used in the `input` section of the job payload to override server and client settings for a specific job:
 
-| Key                               | Description                                                |
-|:----------------------------------|:-----------------------------------------------------------|
-| `ollama_host`                     | Base URL for the Ollama server (alias: `ollama_base_url`). |
-| `ollama_model`                    | Name of the Ollama model to use.                           |
-| `ollama_context_length`           | Context window size (tokens).                              |
-| `ollama_num_parallel`             | Max parallel requests for the server.                      |
-| `ollama_keep_alive`               | Duration to keep models in memory (e.g., `-1`).            |
-| `ollama_flash_attention`          | Enable/disable Flash Attention (`1` or `0`).               |
-| `ollama_kv_cache_type`            | Quantization for K/V cache (e.g., `q8_0`).                 |
-| `ollama_max_retries`              | Max retries for LLM requests.                              |
-| `ollama_retry_delay`              | Delay (seconds) between retries.                           |
-| `ollama_chunk_size`               | Characters per text chunk (default: `4000`).               |
-| `ollama_debug`                    | Enable Ollama server debug logging (`1`).                  |
-| `ollama_log_dir`                  | Directory for `ollama.log`.                                |
-| `ollama_hf_model_name`            | HF model to build from if `ollama_model` is unset.         |
-| `ollama_hf_model_quantization`    | HF quantization string for building.                       |
-| `ollama_max_loaded_models`        | Max models loaded concurrently.                            |
-| `ollama_max_queue`                | Max number of queued requests.                             |
-| `ollama_image_description_prompt` | Custom prompt for image descriptions.                      |
+| Key                                | Description                                                        |
+|:-----------------------------------|:-------------------------------------------------------------------|
+| `vllm_model`                       | Model name for API calls (derived from path if unset).             |
+| `vllm_host`                        | Host URL where vLLM server runs.                                   |
+| `vllm_port`                        | Port for the vLLM server.                                          |
+| `vllm_gpu_util`                    | Maximum GPU memory fraction for vLLM (0.0–1.0).                    |
+| `vllm_max_model_len`               | Maximum context/sequence length (tokens).                          |
+| `vllm_max_num_seqs`                | Max concurrent sequences (auto-calculated from VRAM).              |
+| `vllm_startup_timeout`             | Seconds to wait for vLLM health check on startup.                  |
+| `vllm_vram_recovery_delay`         | Seconds to wait after Marker before starting vLLM.                 |
+| `vllm_max_retries`                 | Max retries for LLM requests.                                      |
+| `vllm_retry_delay`                 | Delay (seconds) between retries.                                   |
+| `vllm_chunk_size`                  | Tokens per text chunk (default: `4000`). Markdown-structure-aware. |
+| `vllm_chunk_workers`               | Async tasks for parallel chunk processing.                         |
+| `vllm_block_correction_prompt_key` | Key into the block correction prompt catalog.                      |
+| `vllm_block_correction_prompt`     | Custom block correction prompt override.                           |
+| `vllm_image_description_prompt`    | Custom prompt for image descriptions.                              |
 
 #### Performance Tuning Examples
 
@@ -245,7 +230,7 @@ The following `ollama_`-prefixed keys can be used in the `input` section of the 
   "input": {
     "input_dir": "input/",
     "output_dir": "output",
-    "ollama_chunk_workers": 4
+    "vllm_chunk_workers": 4
   }
 }
 ```
@@ -270,7 +255,7 @@ This processes multiple files in parallel through the Marker phase.
     "input_dir": "input/",
     "output_dir": "output",
     "marker_workers": 1,
-    "ollama_chunk_workers": 1
+    "vllm_chunk_workers": 1
   }
 }
 ```
@@ -301,12 +286,12 @@ The worker includes a built-in catalog of specialized OCR correction prompts opt
   "input": {
     "input_dir": "input/document.pdf",
     "output_dir": "output",
-    "ollama_block_correction_prompt": "Your custom prompt here..."
+    "vllm_block_correction_prompt": "Your custom prompt here..."
   }
 }
 ```
 
-**Priority:** If both `ollama_block_correction_prompt` and `block_correction_prompt_key` are provided, the custom prompt (`ollama_block_correction_prompt`) takes priority.
+**Priority:** If both `vllm_block_correction_prompt` and `vllm_block_correction_prompt_key` are provided, the custom prompt (`vllm_block_correction_prompt`) takes priority.
 
 #### Available Prompt Keys
 
@@ -376,7 +361,7 @@ The worker includes a built-in catalog of specialized OCR correction prompts opt
 - **Use Custom Prompts** when you need highly specialized correction rules not covered by the catalog, or when you want to experiment with different prompt strategies.
 - **Combine Approaches:** Start with a catalog prompt, test the results, then create a custom prompt if needed.
 
-#### Examples for Custom `ollama_block_correction_prompt`
+#### Examples for Custom `vllm_block_correction_prompt`
 
 If the predefined catalog prompts don't meet your needs, you can provide a fully custom prompt. Here are some examples to inspire your own custom prompts:
 
@@ -399,63 +384,78 @@ Output Formatting: Provide ONLY the corrected text in clean Markdown.
 
 ### Environment Variables
 
-The worker can be configured using environment variables. For `OllamaSettings` and `MarkerSettings`, properties can be set using the `OLLAMA_` or `MARKER_` prefix respectively (e.g., `MARKER_WORKERS`, `OLLAMA_CONTEXT_LENGTH`).
+The worker can be configured using environment variables. For `VllmSettings` and `MarkerSettings`, properties can be set using the `VLLM_` or `MARKER_` prefix respectively (e.g., `MARKER_WORKERS`, `VLLM_MAX_MODEL_LEN`).
 
-| Variable                                 | Description                                                | Default                                          |
-|:-----------------------------------------|:-----------------------------------------------------------|:-------------------------------------------------|
-| `VOLUME_ROOT_MOUNT_PATH`                 | Base path for storage (Required).                          | **None** (Must be set)                           |
-| `USE_POSTPROCESS_LLM`                    | Enable LLM post-processing for the output results.         | `true`                                           |
-| `CLEANUP_OUTPUT_DIR_BEFORE_START`        | Delete output directory before starting.                   | `false`                                          |
-| `OLLAMA_MODEL`                           | Name of the Ollama model to use/pull.                      | (Optional)                                       |
-| `OLLAMA_HUGGING_FACE_MODEL_NAME`         | HF Model ID to build from (if `OLLAMA_MODEL` unset).       | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
-| `OLLAMA_HUGGING_FACE_MODEL_QUANTIZATION` | Quantization string to match GGUF file.                    | (Required if `OLLAMA_MODEL` unset & LLM enabled) |
-| `OLLAMA_CONTEXT_LENGTH`                  | Context window length (tokens) per request.                | `4096`                                           |
-| `OLLAMA_VRAM_FACTOR`                     | VRAM (GB) per token for context calculation.               | `0.00013`                                        |
-| `OLLAMA_IMAGE_DESCRIPTION_PROMPT`        | Default prompt template for extracted image descriptions.  | (Optional)                                       |
-| `HF_HOME`                                | Path to Hugging Face cache.                                | `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache`    |
-| `OLLAMA_MODELS`                          | Absolute path to Ollama models directory.                  | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/models`       |
-| `OLLAMA_LOG_DIR`                         | Absolute path to Ollama logs directory.                    | `${VOLUME_ROOT_MOUNT_PATH}/.ollama/logs`         |
-| `MARKER_DEBUG`                           | Enable debug mode.                                         | `False`                                          |
-| `MARKER_WORKERS`                         | Number of Marker workers (env-level default).              | `auto`                                           |
-| `MARKER_PAGINATE_OUTPUT`                 | Whether to paginate output (env-level default).            | `false`                                          |
-| `MARKER_FORCE_OCR`                       | Force OCR even if text is present.                         | `false`                                          |
-| `MARKER_DISABLE_MULTIPROCESSING`         | Disable internal Marker multiprocessing.                   | `false`                                          |
-| `MARKER_DISABLE_IMAGE_EXTRACTION`        | Disable extraction of images.                              | `false`                                          |
-| `MARKER_PAGE_RANGE`                      | Default page range to convert.                             | `None`                                           |
-| `MARKER_PROCESSORS`                      | Default processors to run.                                 | `None`                                           |
-| `MARKER_OUTPUT_FORMAT`                   | Default output format (markdown, json, etc.).              | `markdown`                                       |
-| `MARKER_MAXTASKSPERCHILD`                | Tasks per worker before recycling (prevents memory leaks). | `10`                                             |
+| Variable                            | Description                                                 | Default                                       |
+|:------------------------------------|:------------------------------------------------------------|:----------------------------------------------|
+| `VOLUME_ROOT_MOUNT_PATH`            | Base path for storage (Required).                           | **None** (Must be set)                        |
+| `VRAM_GB_TOTAL`                     | Total VRAM available on your GPU (Required).                | **None** (Must be set)                        |
+| `VRAM_GB_RESERVE`                   | VRAM to reserve for system/other processes (GB).            | `4`                                           |
+| `USE_POSTPROCESS_LLM`               | Enable LLM post-processing for the output results.          | `true`                                        |
+| `CLEANUP_OUTPUT_DIR_BEFORE_START`   | Delete output directory before starting.                    | `false`                                       |
+| `VLLM_MODEL_PATH`                   | Path to model weights on disk (Required).                   | **None** (Must be set)                        |
+| `VLLM_MODEL`                        | Model name for API calls (derived from path if unset).      | (Optional)                                    |
+| `VLLM_VRAM_GB_MODEL`                | VRAM consumed by the model in GB (Required).                | **None** (Must be set)                        |
+| `VLLM_HOST`                         | Host URL where vLLM server runs.                            | `http://127.0.0.1:8000`                       |
+| `VLLM_PORT`                         | Port for the vLLM server.                                   | `8000`                                        |
+| `VLLM_GPU_UTIL`                     | Maximum GPU memory fraction for vLLM (0.0–1.0).             | `0.85`                                        |
+| `VLLM_MAX_MODEL_LEN`                | Maximum context/sequence length (tokens).                   | `8192`                                        |
+| `VLLM_MAX_NUM_SEQS`                 | Max concurrent sequences (auto-calculated from VRAM).       | `16`                                          |
+| `VLLM_STARTUP_TIMEOUT`              | Seconds to wait for vLLM health check on startup.           | `120`                                         |
+| `VLLM_VRAM_RECOVERY_DELAY`          | Seconds to wait after Marker before starting vLLM.          | `10`                                          |
+| `VLLM_CPU`                          | Run vLLM on CPU (for testing/non-GPU environments).         | `false`                                       |
+| `VLLM_MAX_RETRIES`                  | Maximum retries for failed API calls.                       | `3`                                           |
+| `VLLM_RETRY_DELAY`                  | Delay between retries in seconds.                           | `2.0`                                         |
+| `VLLM_CHUNK_SIZE`                   | Size of text chunks in tokens for correction phase.         | `4000`                                        |
+| `VLLM_CHUNK_WORKERS`                | Async tasks for parallel chunk processing.                  | `16`                                          |
+| `VLLM_IMAGE_DESCRIPTION_PROMPT`     | Custom prompt for extracted image descriptions.             | (Optional)                                    |
+| `VLLM_BLOCK_CORRECTION_PROMPT_KEY`  | Key into the block correction prompt catalog.               | (Optional)                                    |
+| `VLLM_BLOCK_CORRECTION_PROMPT`      | Custom block correction prompt override.                    | (Optional)                                    |
+| `BLOCK_CORRECTION_PROMPT_FILE_NAME` | Filename for the prompt catalog JSON.                       | `block_correction_prompts.json`               |
+| `IMAGE_DESCRIPTION_SECTION_HEADING` | Heading for the fallback image description section.         | `## Extracted Image Descriptions`             |
+| `IMAGE_DESCRIPTION_HEADING`         | Marker at the beginning of an image description.            | `**[BEGIN IMAGE DESCRIPTION]**`               |
+| `IMAGE_DESCRIPTION_END`             | Marker at the end of an image description.                  | `**[END IMAGE DESCRIPTION]**`                 |
+| `HF_HOME`                           | Path to Hugging Face cache.                                 | `${VOLUME_ROOT_MOUNT_PATH}/huggingface-cache` |
+| `MARKER_DEBUG`                      | Enable debug mode.                                          | `False`                                       |
+| `MARKER_WORKERS`                    | Number of Marker workers (env-level default).               | `auto`                                        |
+| `MARKER_PAGINATE_OUTPUT`            | Whether to paginate output (env-level default).             | `false`                                       |
+| `MARKER_FORCE_OCR`                  | Force OCR even if text is present.                          | `false`                                       |
+| `MARKER_DISABLE_MULTIPROCESSING`    | Disable internal Marker multiprocessing.                    | `false`                                       |
+| `MARKER_DISABLE_IMAGE_EXTRACTION`   | Disable extraction of images.                               | `false`                                       |
+| `MARKER_PAGE_RANGE`                 | Default page range to convert.                              | `None`                                        |
+| `MARKER_PROCESSORS`                 | Default processors to run.                                  | `None`                                        |
+| `MARKER_OUTPUT_FORMAT`              | Default output format (markdown, json, etc.).               | `markdown`                                    |
+| `MARKER_MAXTASKSPERCHILD`           | Tasks per worker before recycling (prevents memory leaks).  | `10`                                          |
+| `MARKER_DISBABLE_MAXTASKSPERCHILD`  | Disable automatic recycling of tasks for the child process. | `false`                                       |
 
 ### Performance Tuning Variables
 
 The worker includes adaptive parallelization to maximize GPU utilization (optimized for 24GB VRAM). These settings are automatically calculated based on workload but can be manually overridden.
 
-| Variable                 | Description                                                                                      | Default   | Recommended Range |
-|:-------------------------|:-------------------------------------------------------------------------------------------------|:----------|:------------------|
-| `VRAM_GB_TOTAL`          | Total VRAM available on your GPU (used for auto-tuning worker counts).                           | `24`      | `8-80`            |
-| `OLLAMA_CHUNK_SIZE`      | Characters per chunk for LLM processing. Smaller = more parallelism, larger = better context.    | `4000`    | `2000-8000`       |
-| `MARKER_VRAM_GB_PER_WORKER` | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.               | `5`       | `3-6`             |
-| `OLLAMA_CONTEXT_LENGTH`  | Context length (tokens) per request. Used for auto-calculating `OLLAMA_NUM_PARALLEL`.            | `4096`    | `2048-32768`      |
-| `OLLAMA_VRAM_FACTOR`     | VRAM (GB) per token. Used for auto-calculating `OLLAMA_NUM_PARALLEL` (default: 0.00013).         | `0.00013` | `0.0001-0.0005`   |
-| `OLLAMA_VRAM_GB_MODEL`    | Estimated VRAM (GB) for the base model weights. Used for auto-calculating `OLLAMA_NUM_PARALLEL`. | `8`       | `2-16`            |
-| `OLLAMA_MAX_RETRIES`     | Maximum retries for LLM chunk processing on transient/recoverable errors.                        | `3`       | `1-10`            |
-| `OLLAMA_RETRY_DELAY`     | Base delay (seconds) for exponential backoff between retries.                                    | `2.0`     | `1.0-5.0`         |
-| `OLLAMA_NUM_PARALLEL`    | Max parallel requests per model (auto-calculated from VRAM if unset). `ollama_chunk_workers` is automatically capped to this value. | `auto`    | `1-8`             |
-| `OLLAMA_FLASH_ATTENTION` | Enable Flash Attention for improved memory efficiency.                                           | `1`       | `0, 1`            |
-| `OLLAMA_KV_CACHE_TYPE`   | Quantization type for K/V cache (e.g., `f16`, `q8_0`, `q4_0`).                                   | `f16`     | `f16, q8_0, q4_0` |
-| `OLLAMA_MAX_QUEUE`       | Maximum number of queued requests before rejection.                                              | `512`     | `100-2048`        |
-| `OLLAMA_KEEP_ALIVE`      | How long models stay in memory after a request (e.g., `5m`, `1h`, `-1` for infinite).            | `-1`      | `0`, `5m`, `-1`   |
+| Variable                    | Description                                                                               | Default    | Recommended Range |
+|:----------------------------|:------------------------------------------------------------------------------------------|:-----------|:------------------|
+| `VRAM_GB_TOTAL`             | Total VRAM available on your GPU (Required).                                              | **None**   | `8-80`            |
+| `VRAM_GB_RESERVE`           | VRAM to reserve for system/other processes (GB).                                          | `4`        | `1-8`             |
+| `VLLM_CHUNK_SIZE`           | Tokens per chunk for LLM processing. Smaller = more parallelism, larger = better context. | `4000`     | `2000-8000`       |
+| `MARKER_VRAM_GB_PER_WORKER` | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.        | `5`        | `3-6`             |
+| `VLLM_MAX_MODEL_LEN`        | Max context/sequence length (tokens). Used for auto-calculating `VLLM_MAX_NUM_SEQS`.      | `8192`     | `2048-32768`      |
+| `VRAM_GB_PER_TOKEN_FACTOR`  | VRAM (GB) per token. Used for auto-calculating `VLLM_MAX_NUM_SEQS`.                       | `0.00013`  | `0.0001-0.0005`   |
+| `VLLM_VRAM_GB_MODEL`        | VRAM (GB) consumed by the model. Used for auto-calculating `VLLM_MAX_NUM_SEQS`.           | (Required) | `2-16`            |
+| `VLLM_MAX_RETRIES`          | Maximum retries for LLM chunk processing on transient/recoverable errors.                 | `3`        | `1-10`            |
+| `VLLM_RETRY_DELAY`          | Base delay (seconds) for exponential backoff between retries.                             | `2.0`      | `1.0-5.0`         |
+| `VLLM_MAX_NUM_SEQS`         | Max concurrent sequences (auto-calculated from VRAM if unset).                            | `16`       | `1-32`            |
+| `VLLM_GPU_UTIL`             | Maximum GPU memory fraction for vLLM.                                                     | `0.85`     | `0.5-0.95`        |
 
 #### Adaptive Worker Scaling (Auto Mode)
 
 When set to `auto` (default), the worker automatically optimizes parallelism based on:
 
-**Ollama Concurrency**:
-- `OLLAMA_NUM_PARALLEL` is calculated based on available VRAM and context window size:
-  `parallel = floor((TOTAL_VRAM - VRAM_RESERVE - OLLAMA_BASE_VRAM) / (OLLAMA_VRAM_FACTOR * OLLAMA_CONTEXT_LENGTH))`
-- `ollama_chunk_workers` (Python threads) defaults to 16, but is **automatically capped** to `OLLAMA_NUM_PARALLEL` to prevent overwhelming the Ollama server with more concurrent requests than it can handle.
-- Before processing begins, the model is **preloaded** into VRAM by sending an empty prompt to the Ollama server (per [Ollama FAQ](https://docs.ollama.com/faq#how-can-i-preload-a-model-into-ollama-to-get-faster-response-times)). This prevents "model runner has unexpectedly stopped" crashes when many parallel requests arrive before the model is ready.
-- After preloading, the worker runs `ollama ps` to **verify GPU loading** (per [Ollama FAQ](https://docs.ollama.com/faq#how-can-i-tell-if-my-model-was-loaded-onto-the-gpu)). If the model is running on CPU instead of GPU, a warning is logged to help diagnose performance or driver issues.
+**vLLM Concurrency**:
+- `VLLM_MAX_NUM_SEQS` is calculated based on available VRAM and context window size:
+  `max_num_seqs = floor((TOTAL_VRAM - VRAM_RESERVE - VLLM_VRAM_GB_MODEL) / (VRAM_GB_PER_TOKEN_FACTOR * VLLM_MAX_MODEL_LEN))`
+- **Precise Token Counting**: Uses the `tiktoken` library to accurately measure chunk sizes for OpenAI-compatible models, ensuring optimal context window utilization.
+- `vllm_chunk_workers` (async tasks) defaults to 16, controlling parallel chunk processing.
+- The vLLM server is started as a subprocess and monitored via a health check endpoint with a configurable startup timeout (`VLLM_STARTUP_TIMEOUT`).
 
 **Marker Concurrency**:
 - `marker_workers` is scaled based on number of files and available VRAM (capped at 4).
@@ -464,17 +464,17 @@ When set to `auto` (default), the worker automatically optimizes parallelism bas
 
 **Single File** (1 file):
 - `marker_workers=1` (no file-level parallelism needed)
-- `ollama_chunk_workers` (capped to `OLLAMA_NUM_PARALLEL`)
+- `vllm_chunk_workers` for parallel chunk processing
 - **Best for**: Processing single large PDFs efficiently
 
 **Small Batch** (2-3 files):
 - `marker_workers` (moderate file parallelism, up to 2)
-- `ollama_chunk_workers` (capped to `OLLAMA_NUM_PARALLEL`)
+- `vllm_chunk_workers` for parallel chunk processing
 - **Best for**: Medium workloads with moderate-sized PDFs
 
 **Large Batch** (4+ files):
 - `marker_workers` (maximize marker file parallelism, up to 4)
-- `ollama_chunk_workers` (capped to `OLLAMA_NUM_PARALLEL`, files processed sequentially)
+- `vllm_chunk_workers` for parallel chunk processing (files processed sequentially)
 - **Best for**: Batch processing many small-to-medium PDFs
 
 *Note: All auto-calculations are bounded by available VRAM (VRAM_GB_TOTAL).*
@@ -494,15 +494,82 @@ For specific hardware or workloads, you can override auto-tuning:
 ```bash
 # Example: 48GB VRAM GPU, medium LLM models - maximize parallelism
 VRAM_GB_TOTAL=48
-OLLAMA_CONTEXT_LENGTH=8192
+VLLM_MAX_MODEL_LEN=8192
 
 # Example: 16GB VRAM GPU, small LLM models - conservative settings
 VRAM_GB_TOTAL=16
-OLLAMA_VRAM_GB_MODEL=4
+VLLM_VRAM_GB_MODEL=4
 
-# Example: Disable LLM parallelization via "ollama_chunk_workers=1" in json input of serverless endpoint (troubleshooting)
-ollama_chunk_workers=1
+# Example: Disable LLM parallelization via "vllm_chunk_workers=1" in json input of serverless endpoint (troubleshooting)
+vllm_chunk_workers=1
 ```
+
+### Recommended Environment Variables for ~24GB VRAM GPU Deployment
+
+The following environment variables are recommended for a cloud deployment with a single GPU and approximately 24GB VRAM. This configuration balances performance with stability for typical document processing workloads.
+
+| Variable                          | Tool              | Description                                                                                     | Recommended Value                                                       |
+|:----------------------------------|:------------------|:------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------|
+| `VOLUME_ROOT_MOUNT_PATH`          | Worker            | Base path for storage volume.                                                                   | `/workspace` (runpod.io pod) or `/runpod-volume` (runpod.io serverless) |
+| `VRAM_GB_TOTAL`                   | Worker            | Total VRAM available on the GPU.                                                                | `24`                                                                    |
+| `VRAM_GB_RESERVE`                 | Worker            | VRAM to reserve for system/other processes (GB).                                                | `4`                                                                     |
+| `USE_POSTPROCESS_LLM`             | Worker            | Enable LLM post-processing for output results.                                                  | `true`                                                                  |
+| `CLEANUP_OUTPUT_DIR_BEFORE_START` | Worker            | Delete output directory before starting new job.                                                | `false`                                                                 |
+| `VLLM_MODEL_PATH`                 | vLLM              | Path to model weights on disk (e.g., `/workspace/models/mistral-7b-instruct`).                  | (set to your model path, this or `VLLM_MODEL` is required)              |
+| `VLLM_MODEL`                      | vLLM              | Model name for API calls (auto-derived from path if unset).                                     | (this or `VLLM_MODEL_PATH` is required)                                 |
+| `VLLM_VRAM_GB_MODEL`              | vLLM              | VRAM consumed by the model in GB (7B model ~6-8GB).                                             | model dependent                                                         |
+| `VLLM_HOST`                       | vLLM              | Host URL where vLLM server runs.                                                                | `http://127.0.0.1`                                                      |
+| `VLLM_PORT`                       | vLLM              | Port for the vLLM server.                                                                       | `8000`                                                                  |
+| `VLLM_GPU_UTIL`                   | vLLM              | Maximum GPU memory fraction for vLLM (0.0–1.0).                                                 | `0.85`                                                                  |
+| `VLLM_MAX_MODEL_LEN`              | vLLM              | Maximum context/sequence length (tokens).                                                       | `8192`                                                                  |
+| `VLLM_MAX_NUM_SEQS`               | vLLM              | Max concurrent sequences (auto-calculated if unset).                                            | `16`                                                                    |
+| `VLLM_STARTUP_TIMEOUT`            | vLLM              | Seconds to wait for vLLM health check on startup.                                               | `120`                                                                   |
+| `VLLM_VRAM_RECOVERY_DELAY`        | vLLM              | Seconds to wait after Marker before starting vLLM.                                              | `10`                                                                    |
+| `VLLM_MAX_RETRIES`                | vLLM              | Maximum retries for failed API calls.                                                           | `3`                                                                     |
+| `VLLM_RETRY_DELAY`                | vLLM              | Delay between retries in seconds.                                                               | `2.0`                                                                   |
+| `VLLM_CHUNK_SIZE`                 | vLLM              | Size of text chunks in tokens for correction phase.                                             | `4000`                                                                  |
+| `VLLM_CHUNK_WORKERS`              | vLLM              | Async tasks for parallel chunk processing.                                                      | `16`                                                                    |
+| `HF_HOME`                         | Hugging Face      | Path to Hugging Face cache directory.                                                           | `<VOLUME_ROOT_MOUNT_PATH>/huggingface-cache`                            |
+| `HF_HUB_OFFLINE`                  | Hugging Face      | Run Hugging Face Hub in offline mode (prevents downloads).                                      | `1`                                                                     |
+| `TRANSFORMERS_OFFLINE`            | Transformers      | Prevents the Transformers library from downloading model weights.                               | `1`                                                                     |
+| `MODEL_CACHE_DIR`                 | Surya/Marker      | Cache directory for Surya/Marker models.                                                        | `<VOLUME_ROOT_MOUNT_PATH>/huggingface-cache/hub`                        |
+| (x) `OCR_ENGINE`                  | Marker/Surya      | OCR engine to use (e.g., `surya`, `tesseract`).                                                 | `surya`                                                                 |
+| (x) `RECOGNITION_BATCH_SIZE`      | Surya             | Batch size for text recognition inference (lower for VRAM constraints).                         | `128`                                                                   |
+| (x) `INFERENCE_RAM`               | Marker            | RAM (in GB) available for inference operations.                                                 | `20`                                                                    |
+| (x) `DTYPE`                       | Marker/Surya/vLLM | Data type for model inference (`float16`, `bfloat16`, `float32`).                               | `float16` (`bfloat16` on Ampere architecure (A10G/3090/4090))           |
+| `MARKER_DEBUG`                    | Marker            | Enable debug mode for detailed logging.                                                         | `false`                                                                 |
+| `MARKER_WORKERS`                  | Marker            | Number of Marker workers (auto-calculated if unset).                                            | `auto`                                                                  |
+| `MARKER_PAGINATE_OUTPUT`          | Marker            | Whether to paginate output.                                                                     | `false`                                                                 |
+| `MARKER_FORCE_OCR`                | Marker            | Force OCR even if text is present.                                                              | `false`                                                                 |
+| `MARKER_DISABLE_MULTIPROCESSING`  | Marker            | Disable internal Marker multiprocessing.                                                        | `true` (since multiprocessing is handled here directly)                 | 
+| `MARKER_DISABLE_IMAGE_EXTRACTION` | Marker            | Disable extraction of images from documents.                                                    | `false`                                                                 |
+| `MARKER_OUTPUT_FORMAT`            | Marker            | Default output format (markdown, json, etc.).                                                   | `markdown`                                                              |
+| `MARKER_MAXTASKSPERCHILD`         | Marker            | Tasks per worker before recycling (prevents memory leaks).                                      | `10`                                                                    |
+| `MARKER_VRAM_GB_PER_WORKER`       | Marker            | Estimated VRAM per Marker worker (GB) for auto-scaling.                                         | `5`                                                                     |
+| (x) `PYTORCH_CUDA_ALLOC_CONF`     | PyTorch           | CUDA memory allocator configuration (e.g., `expandable_segments:True` to reduce fragmentation). | `expandable_segments:True`                                              |
+| `PYTORCH_ENABLE_MPS_FALLBACK`     | PyTorch           | Fallback to CPU if MPS operations aren't supported.                                             | `1`                                                                     |
+| `TORCH_DEVICE`                    | PyTorch           | Device to use (`cpu`, `cuda`, `mps`) - auto-detected if unset.                                  | `cuda`                                                                  |
+| `TORCH_NUM_THREADS`               | PyTorch           | Threads for intraop parallelism on CPU.                                                         | `1`                                                                     |
+| `OMP_NUM_THREADS`                 | PyTorch           | Threads for OpenMP parallel regions.                                                            | `1`                                                                     |
+| `MKL_NUM_THREADS`                 | PyTorch           | Threads for Intel MKL library.                                                                  | `1`                                                                     |
+| (x) `NCCL_P2P_DISABLE`            | NCCL/PyTorch      | Disable peer-to-peer GPU communication (set to `1` for single-GPU setups).                      | `1`                                                                     |
+| `CUDA_VISIBLE_DEVICES`            | CUDA              | Specifies which GPU(s) to use (0-indexed).                                                      | `0`                                                                     |
+| `PYTHONUNBUFFERED`                | Python            | Force unbuffered stdout/stderr for real-time logging.                                           | `1`                                                                     |
+| `OUTPUT_ENCODING`                 | Marker            | Encoding for output text files.                                                                 | `utf-8`                                                                 |
+| `OUTPUT_IMAGE_FORMAT`             | Marker            | Format for extracted images (JPEG, PNG, etc.).                                                  | `JPEG`                                                                  |
+| `VRAM_GB_PER_TOKEN_FACTOR`        | Worker            | VRAM (GB) per token for auto-calculating vLLM concurrency.                                      | `0.00013`                                                               |
+
+**Notes:**
+
+- The environment variables marked with `(x)` should be first checked whether they should be set.
+- Set `VLLM_MODEL_PATH` to the absolute path where your model weights are stored.
+- Adjust `VLLM_VRAM_GB_MODEL` based on your specific model size (7B models typically use 6-8GB).
+- For models with larger context windows (16k+), increase `VLLM_MAX_MODEL_LEN` and reduce `VLLM_MAX_NUM_SEQS`.
+- The `MARKER_WORKERS` and `VLLM_MAX_NUM_SEQS` values are auto-calculated based on available VRAM when set to `auto`.
+- CPU thread counts (`TORCH_NUM_THREADS`, `OMP_NUM_THREADS`, `MKL_NUM_THREADS`) should be adjusted based on your CPU core count (4 is suitable for 8-16 core systems).
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` helps reduce memory fragmentation during long-running jobs.
+- `NCCL_P2P_DISABLE=1` is recommended for single-GPU deployments to avoid unnecessary overhead.
+- `DTYPE=float16` provides the best balance of speed and accuracy for 24GB VRAM GPUs.
 
 ### Additional Configuration Variables
 
@@ -522,21 +589,19 @@ The following variables can also be set to further customize the environment, th
 
 **Tools / Performance**
 
-| Tool             | Variable                          | Description                                       | Default                  |
-|:-----------------|:----------------------------------|:--------------------------------------------------|:-------------------------|
-| **Python**       | `PYTHONUNBUFFERED`                | Force unbuffered stdout/stderr.                   | `1`                      |
-| **Hugging Face** | `HF_HUB_OFFLINE`                  | Run Hugging Face Hub in offline mode.             | `1`                      |
-| **Ollama**       | `OLLAMA_HOST`                     | Base URL for Ollama server.                       | `http://127.0.0.1:11434` |
-| **Ollama**       | `OLLAMA_DEBUG`                    | Enable Ollama server debug logging (`1`).         | `0`                      |
-| **Ollama**       | `OLLAMA_IMAGE_DESCRIPTION_PROMPT` | Prompt template for extracted image descriptions. | (Optional)               |
-| **Ollama**       | `OLLAMA_MAX_LOADED_MODELS`        | Max models loaded concurrently.                   | `3 * GPUs`               |
-| **Ollama**       | `OLLAMA_KEEP_ALIVE`               | Duration to keep models loaded in memory.         | `-1`                     |
-| **Ollama**       | `OLLAMA_MODELS`                   | Directory where Ollama models are stored.         | (Managed internally)     |
-| **PyTorch**      | `PYTORCH_ENABLE_MPS_FALLBACK`     | Fallback to CPU if MPS ops aren't supported.      | `1`                      |
-| **PyTorch**      | `TORCH_NUM_THREADS`               | Threads for intraop parallelism on CPU.           | `1`                      |
-| **PyTorch**      | `OMP_NUM_THREADS`                 | Threads for OpenMP parallel regions.              | `1`                      |
-| **PyTorch**      | `MKL_NUM_THREADS`                 | Threads for Intel MKL library.                    | `1`                      |
-| **PyTorch**      | `TORCH_DEVICE`                    | Device to use (`cpu`, `cuda`, `mps`).             | Auto-detected            |
+| Tool                    | Variable                        | Description                                                 | Default                 |
+|:------------------------|:--------------------------------|:------------------------------------------------------------|:------------------------|
+| **Python**              | `PYTHONUNBUFFERED`              | Force unbuffered stdout/stderr.                             | `1`                     |
+| **Hugging Face**        | `HF_HUB_OFFLINE`                | Run Hugging Face Hub in offline mode.                       | `1`                     |
+| **Transformer Library** | `TRANSFORMERS_OFFILNE`          | Prevents the Transformers Library to download model weights | `1`                     | 
+| **vLLM**                | `VLLM_HOST`                     | Host URL where vLLM server runs.                            | `http://127.0.0.1:8000` |
+| **vLLM**                | `VLLM_PORT`                     | Port for the vLLM server.                                   | `8000`                  |
+| **vLLM**                | `VLLM_IMAGE_DESCRIPTION_PROMPT` | Prompt template for extracted image descriptions.           | (Optional)              |
+| **PyTorch**             | `PYTORCH_ENABLE_MPS_FALLBACK`   | Fallback to CPU if MPS ops aren't supported.                | `1`                     |
+| **PyTorch**             | `TORCH_NUM_THREADS`             | Threads for intraop parallelism on CPU.                     | `1`                     |
+| **PyTorch**             | `OMP_NUM_THREADS`               | Threads for OpenMP parallel regions.                        | `1`                     |
+| **PyTorch**             | `MKL_NUM_THREADS`               | Threads for Intel MKL library.                              | `1`                     |
+| **PyTorch**             | `TORCH_DEVICE`                  | Device to use (`cpu`, `cuda`, `mps`).                       | Auto-detected           |
 
 **Marker Specific**
 
@@ -611,7 +676,7 @@ This workflow will:
 - Push the changes and the tag to the repository.
 - **Trigger the Docker publish workflow** automatically as a subsequent step.
 
-### Using local script (Alternative)
+### Using a local script (Alternative)
 
 Alternatively, you can use the `release.sh` script locally:
 
