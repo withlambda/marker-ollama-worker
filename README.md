@@ -79,7 +79,7 @@ This sequential execution model ensures that vLLM has full access to VRAM for lo
     docker build -t marker-vllm-worker .
     ```
 
-    *Note:* The build uses the `--use-deprecated=legacy-resolver` pip flag to handle a dependency conflict between `marker-pdf` 1.10.2 (which requires `openai < 2.0.0`) and the requested `openai` 2.29.0 (required for `vllm` 0.17.1).
+    *Note:* The build uses the `--use-deprecated=legacy-resolver` pip flag to handle a dependency conflict between `marker-pdf` 1.10.2 (which requires `openai < 2.0.0`) and the requested `openai` 2.29.0 (required for `vllm` 0.18.0).
 
 3.  Push the image to a container registry (e.g., Docker Hub, GHCR).
 

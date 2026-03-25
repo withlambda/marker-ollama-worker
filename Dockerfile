@@ -14,8 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # 1. ARG SETUP
-ARG PYTORCH_VERSION=2.10.0
-ARG CUDA_VERSION=13.0
+ARG PYTORCH_VERSION=2.8.0
+ARG CUDA_VERSION=12.8
 ARG CUDNN_VERSION=9
 ARG DOWNLOAD_MARKER_MODELS="false"
 ARG BASE_IMAGE=pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime
