@@ -30,7 +30,7 @@ def _make_global_config(tmp_dir: str, **overrides) -> GlobalConfig:
     """Create a minimal GlobalConfig for testing, using the given tmp_dir as volume root."""
     defaults = {
         "VOLUME_ROOT_MOUNT_PATH": tmp_dir,
-        "MARKLLM_VRAM_GB_TOTAL": "24",
+        "VRAM_GB_TOTAL": "24",
     }
     defaults.update(overrides)
     return GlobalConfig(**defaults)
@@ -278,7 +278,7 @@ class TestVllmSettingsMaxNumSeqsAutoCalc(unittest.TestCase):
         """Auto-calc yields >1 seq when plenty of VRAM is available."""
         # vram_total=24, reserve=4, model=6 => available=14
         # context_vram = 0.00013 * 8192 ≈ 2.13 => seqs = int(14 / 2.13) = 6
-        cfg = _make_global_config(self.tmp_dir, MARKLLM_VRAM_GB_TOTAL="24", VRAM_GB_RESERVE="4")
+        cfg = _make_global_config(self.tmp_dir, VRAM_GB_TOTAL="24", VRAM_GB_RESERVE="4")
         settings = _make_vllm_settings(cfg, self.model_dir, vram_gb_model=6)
         expected = max(1, int((24 - 4 - 6) // (0.00013 * 8192)))
         self.assertEqual(settings.vllm_max_num_seqs, expected)
@@ -287,7 +287,7 @@ class TestVllmSettingsMaxNumSeqsAutoCalc(unittest.TestCase):
     def test_auto_calc_falls_to_one_when_no_vram(self):
         """Auto-calc yields 1 when available VRAM is zero or negative."""
         # vram_total=8, reserve=4, model=6 => available=-2 => 1
-        cfg = _make_global_config(self.tmp_dir, MARKLLM_VRAM_GB_TOTAL="8", VRAM_GB_RESERVE="4")
+        cfg = _make_global_config(self.tmp_dir, VRAM_GB_TOTAL="8", VRAM_GB_RESERVE="4")
         settings = _make_vllm_settings(cfg, self.model_dir, vram_gb_model=6)
         self.assertEqual(settings.vllm_max_num_seqs, 1)
 
