@@ -53,7 +53,7 @@ class GlobalConfig(BaseSettings):
     )
 
     # memory handling
-    vram_gb_total: int = Field(..., validation_alias="MARKLLM_VRAM_GB_TOTAL", frozen=True)
+    vram_gb_total: int = Field(..., validation_alias="VRAM_GB_TOTAL", frozen=True)
     vram_gb_reserve: int = Field(4, validation_alias="VRAM_GB_RESERVE", frozen=True)
     vram_gb_per_token_factor: float = Field(0.00013, validation_alias="VRAM_GB_PER_TOKEN_FACTOR", frozen=True)
 

@@ -61,6 +61,7 @@ This sequential execution model ensures that vLLM has full access to VRAM for lo
 3.  **GPU Visibility**: Check the `Environment Info` section at the start of the logs to verify that `CUDA_VISIBLE_DEVICES` is correctly set and `nvidia-smi` is accessible.
 4.  **vLLM Server Logs**: The vLLM subprocess stdout/stderr is captured and logged. Check for OOM errors or CUDA-related failures in the worker logs.
 5.  **Triton JIT Compiler**: vLLM/Triton compiles CUDA helper modules at runtime. The container must keep a C/C++ compiler (`gcc`/`g++`) available, otherwise startup can fail with `RuntimeError: Failed to find C compiler`.
+6.  **Python C Headers**: Triton also compiles Python extension glue code and requires `Python.h` at runtime. Keep Python development headers installed in the image (e.g., `python3-dev` for the container Python version), otherwise startup can fail with `fatal error: Python.h: No such file or directory`.
 
 ## Prerequisites
 
@@ -390,7 +391,7 @@ The worker can be configured using environment variables. For `VllmSettings`, us
 | Variable                            | Description                                                 | Default                                       |
 |:------------------------------------|:------------------------------------------------------------|:----------------------------------------------|
 | `VOLUME_ROOT_MOUNT_PATH`            | Base path for storage (Required).                           | **None** (Must be set)                        |
-| `MARKLLM_VRAM_GB_TOTAL`                     | Total VRAM available on your GPU (Required).                | **None** (Must be set)                        |
+| `VRAM_GB_TOTAL`                     | Total VRAM available on your GPU (Required).                | **None** (Must be set)                        |
 | `VRAM_GB_RESERVE`                   | VRAM to reserve for system/other processes (GB).            | `4`                                           |
 | `USE_POSTPROCESS_LLM`               | Enable LLM post-processing for the output results.          | `true`                                        |
 | `CLEANUP_OUTPUT_DIR_BEFORE_START`   | Delete output directory before starting.                    | `false`                                       |
@@ -435,7 +436,7 @@ The worker includes adaptive parallelization to maximize GPU utilization (optimi
 
 | Variable                    | Description                                                                               | Default    | Recommended Range |
 |:----------------------------|:------------------------------------------------------------------------------------------|:-----------|:------------------|
-| `MARKLLM_VRAM_GB_TOTAL`             | Total VRAM available on your GPU (Required).                                              | **None**   | `8-80`            |
+| `VRAM_GB_TOTAL`             | Total VRAM available on your GPU (Required).                                              | **None**   | `8-80`            |
 | `VRAM_GB_RESERVE`           | VRAM to reserve for system/other processes (GB).                                          | `4`        | `1-8`             |
 | `MARKLLM_VLLM_CHUNK_SIZE`   | Tokens per chunk for LLM processing. Smaller = more parallelism, larger = better context. | `4000`     | `2000-8000`       |
 | `MARKER_VRAM_GB_PER_WORKER` | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.        | `5`        | `3-6`             |
@@ -478,7 +479,7 @@ When set to `auto` (default), the worker automatically optimizes parallelism bas
 - `vllm_chunk_workers` for parallel chunk processing (files processed sequentially)
 - **Best for**: Batch processing many small-to-medium PDFs
 
-*Note: All auto-calculations are bounded by available VRAM (MARKLLM_VRAM_GB_TOTAL).*
+*Note: All auto-calculations are bounded by available VRAM (VRAM_GB_TOTAL).*
 
 #### Performance Examples
 
@@ -494,11 +495,11 @@ For specific hardware or workloads, you can override auto-tuning:
 
 ```bash
 # Example: 48GB VRAM GPU, medium LLM models - maximize parallelism
-MARKLLM_VRAM_GB_TOTAL=48
+VRAM_GB_TOTAL=48
 MARKLLM_VLLM_MAX_MODEL_LEN=8192
 
 # Example: 16GB VRAM GPU, small LLM models - conservative settings
-MARKLLM_VRAM_GB_TOTAL=16
+VRAM_GB_TOTAL=16
 MARKLLM_VLLM_VRAM_GB_MODEL=4
 
 # Example: Disable LLM parallelization via "vllm_chunk_workers=1" in json input of serverless endpoint (troubleshooting)
@@ -512,7 +513,7 @@ The following environment variables are recommended for a cloud deployment with 
 | Variable                          | Tool              | Description                                                                                     | Recommended Value                                                       |
 |:----------------------------------|:------------------|:------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------|
 | `VOLUME_ROOT_MOUNT_PATH`          | Worker            | Base path for storage volume.                                                                   | `/workspace` (runpod.io pod) or `/runpod-volume` (runpod.io serverless) |
-| `MARKLLM_VRAM_GB_TOTAL`                   | Worker            | Total VRAM available on the GPU.                                                                | `24`                                                                    |
+| `VRAM_GB_TOTAL`                   | Worker            | Total VRAM available on the GPU.                                                                | `24`                                                                    |
 | `VRAM_GB_RESERVE`                 | Worker            | VRAM to reserve for system/other processes (GB).                                                | `4`                                                                     |
 | `USE_POSTPROCESS_LLM`             | Worker            | Enable LLM post-processing for output results.                                                  | `true`                                                                  |
 | `CLEANUP_OUTPUT_DIR_BEFORE_START` | Worker            | Delete output directory before starting new job.                                                | `false`                                                                 |

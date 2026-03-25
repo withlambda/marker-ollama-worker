@@ -97,7 +97,6 @@ RUN mkdir -p ${XDG_CACHE_HOME} && \
     && if [ "${DOWNLOAD_MARKER_MODELS}" = "true" ]; then \
     	python3 -c "from marker.models import create_model_dict; create_model_dict()"; \
     fi \
-    && apt-get purge -y python3-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
