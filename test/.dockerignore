@@ -4,6 +4,7 @@
 !vllm_worker.py
 !utils.py
 !settings.py
+!check_dependencies.py
 !block_correction_prompts.json
 !requirements.txt
 !requirements-test.txt

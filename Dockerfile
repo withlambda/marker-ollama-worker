@@ -76,7 +76,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # 5. APPLICATION SETUP
 WORKDIR /app
-COPY requirements.txt ./
+COPY requirements.txt check_dependencies.py ./
 
 RUN mkdir -p ${XDG_CACHE_HOME} && \
     apt-get update \
@@ -90,6 +90,7 @@ RUN mkdir -p ${XDG_CACHE_HOME} && \
     gosu \
     && pip install --no-cache-dir --break-system-packages pip  \
     && pip install --no-cache-dir --break-system-packages --use-deprecated=legacy-resolver -r requirements.txt \
+    && python3 check_dependencies.py \
     && python3 -c "from marker.util import assign_config, download_font; download_font();" \
     && if [ "${DOWNLOAD_MARKER_MODELS}" = "true" ]; then \
     	python3 -c "from marker.models import create_model_dict; create_model_dict()"; \
