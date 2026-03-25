@@ -27,9 +27,10 @@ import logging
 import random
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Callable, Coroutine, Any, TypeVar
 
 import httpx
 import openai
@@ -51,6 +52,8 @@ _SHUTDOWN_GRACE_PERIOD = 10
 
 # Health check polling interval in seconds
 _HEALTH_CHECK_INTERVAL = 2
+
+_T = TypeVar("_T")
 
 
 class VllmWorker:
@@ -219,6 +222,55 @@ class VllmWorker:
     # Text processing
     # ------------------------------------------------------------------
 
+    def _run_async_from_sync(self, coroutine_factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
+        """
+        Execute an async coroutine from a synchronous method.
+
+        If the current thread has no running event loop, the coroutine is executed
+        directly via ``asyncio.run``.
+
+        If a loop is already running in the current thread (for example, when this
+        worker is called from async application code), execution is delegated to a
+        temporary background thread that owns its own event loop.
+
+        Args:
+            coroutine_factory: A zero-argument callable that returns the coroutine
+                to execute.
+
+        Returns:
+            The coroutine result.
+
+        Raises:
+            RuntimeError: If background execution ends without a result.
+            Exception: Re-raises any exception from the coroutine.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine_factory())
+
+        result_holder: List[_T] = []
+        error_holder: List[Exception] = []
+
+        def _runner() -> None:
+            """Run the coroutine in a dedicated event loop hosted by this thread."""
+            try:
+                result_holder.append(asyncio.run(coroutine_factory()))
+            except Exception as e:
+                error_holder.append(e)
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join()
+
+        if error_holder:
+            raise error_holder[0]
+
+        if not result_holder:
+            raise RuntimeError("Async execution thread finished without producing a result.")
+
+        return result_holder[0]
+
     def process_text(
         self,
         text: str,
@@ -262,8 +314,8 @@ class VllmWorker:
         max_workers = max(1, int(max_chunk_workers))
         logger.info(f"Processing {len(chunks)} chunks with vLLM using {max_workers} async workers...")
 
-        corrected_chunks = asyncio.get_event_loop().run_until_complete(
-            self._process_chunks_async(chunks, prompt_template, max_workers)
+        corrected_chunks = self._run_async_from_sync(
+            lambda: self._process_chunks_async(chunks, prompt_template, max_workers)
         )
 
         return "\n\n".join(corrected_chunks)
@@ -334,8 +386,8 @@ class VllmWorker:
         max_workers = max(1, int(max_image_workers))
         logger.info(f"Describing {len(image_paths)} extracted images with {max_workers} async worker(s)...")
 
-        descriptions: List[Optional[str]] = asyncio.get_event_loop().run_until_complete(
-            self._describe_images_async(image_paths, prompt_template, max_workers)
+        descriptions: List[Optional[str]] = self._run_async_from_sync(
+            lambda: self._describe_images_async(image_paths, prompt_template, max_workers)
         )
 
         return [
