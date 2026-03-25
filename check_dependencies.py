@@ -77,6 +77,13 @@ def main():
         "pydantic_extra_types",
         "pycountry",
         "mistral_common",
+        "anthropic",
+        "cv2",
+        "starlette",
+        "numpy",
+        "google.protobuf",
+        "filelock",
+        "cuda",
     ]
 
     all_ok = True
