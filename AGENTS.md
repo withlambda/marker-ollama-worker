@@ -24,10 +24,25 @@ When generating or modifying code, the agent must ensure that:
 2.  **Clarity**: Variable and function names should be descriptive and follow standard naming conventions for the language being used.
 3.  **Maintainability**: Code should be structured logically to facilitate future updates and debugging.
 4.  **Project Documentation**:
-    - The `README.md` file must be kept up-to-date with every significant change.
+    - The `README.md` file must be kept up to date with every significant change.
     - It should clearly state the project's purpose, installation steps, usage instructions, and deployment details.
     - When implementing changes that modify the system's behavior or configuration, the agent must review and update `README.md` to reflect these changes.
     - **Verification**: Before writing to `README.md`, re-read the current file content to ensure no manual edits (e.g., specific configuration values, notes, or section removals) are lost in the update.
+
+## Dependencies in Source Code and Tests
+
+1. **Required dependencies are mandatory**:
+   - In source code files, required dependencies MUST be imported directly.
+   - Do NOT use `try/except` import patterns for required packages.
+   - If a required package is not installed, execution should fail fast with the normal import error.
+
+2. **No dummy dependency classes/modules in tests for required packages**:
+   - Tests MUST NOT simulate required third-party packages via dummy classes, `sys.modules` injection, or equivalent module-level shims.
+   - For local testing, install the real dependencies instead.
+
+3. **Local testing dependency setup**:
+   - Before running tests locally, install project dependencies from `requirements.txt`.
+   - Preferred command: `python -m pip install -r requirements.txt`.
 
 ## Custom Commands
 
