@@ -35,7 +35,7 @@ from typing import Optional, List, Tuple, Callable, Coroutine, Any, TypeVar
 import httpx
 import openai
 import tiktoken
-from langchain_text_splitters import TokenTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from openai.types.chat import (
     ChatCompletionUserMessageParam,
@@ -219,7 +219,8 @@ class VllmWorker:
     # Text processing
     # ------------------------------------------------------------------
 
-    def _run_async_from_sync(self, coroutine_factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
+    @staticmethod
+    def _run_async_from_sync(coroutine_factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
         """
         Execute an async coroutine from a synchronous method.
 
@@ -306,7 +307,7 @@ class VllmWorker:
         if not self.settings.vllm_model:
             raise ValueError("vllm_model not set for processing")
 
-        effective_chunk_size = self._compute_effective_chunk_size(prompt_template, r=1.0)
+        effective_chunk_size: int = self._compute_effective_chunk_size(prompt_template, r=1.0)
         if effective_chunk_size <= 0:
             logger.error(
                 "Skipping OCR error correction: prompt token usage leaves no room "
@@ -530,8 +531,10 @@ class VllmWorker:
                     continue
                 else:
                     logger.error(
-                        f"Fatal error processing chunk {chunk_index} "
-                        f"after {attempt + 1} attempts: {e}"
+                        f"Fatal error processing chunk {chunk_index} after {attempt + 1} attempts "
+                        f"(${len(chunk)} chunk size, {len(system_prompt)} prompt size, {max_completion_tokens} "
+                        f"max completion_tokens, {len(chunk)+len(system_prompt)+max_completion_tokens} sum,"
+                        f"{self.settings.vllm_max_model_len} allowed total): {e}"
                     )
                     return chunk  # fallback to the original
 
@@ -976,8 +979,7 @@ class VllmWorker:
     # ------------------------------------------------------------------
 
 
-    @staticmethod
-    def _count_tokens(text: str) -> int:
+    def _count_tokens(self, text: str) -> int:
         """
         Count tokens in a string using tiktoken
 
@@ -987,11 +989,13 @@ class VllmWorker:
         Returns:
             Estimated or actual token count.
         """
-        # Use cl100k_base (GPT-4) as a robust proxy for most modern LLMs
-        encoding = tiktoken.get_encoding("cl100k_base")
+        # Use a configurable proxy for modern LLMs (larger token counts by default)
+        # to avoid context overflow with models that have less efficient tokenizers or different
+        # vocabularies (like Qwen).
+        encoding = tiktoken.get_encoding(self.settings.vllm_tiktoken_encoding_name)
         return len(encoding.encode(text, disallowed_special=()))
 
-    def _chunk_text(self, text: str, chunk_size: Optional[int] = None) -> List[str]:
+    def _chunk_text(self, text: str, chunk_size: int) -> List[str]:
         """
         Split Markdown text into chunks of approximately *chunk_size* tokens,
         preserving the Markdown structure.
@@ -1001,82 +1005,42 @@ class VllmWorker:
         - Fenced code blocks (delimited by triple backticks)
         - Tables (consecutive lines starting with ``|``)
 
-        Token count is measured via tiktoken or approximated as 4 chars/token.
+        Token count is measured via tiktoken.
 
         Args:
             text: The Markdown text to split.
-            chunk_size: Maximum *tokens* per chunk.  Defaults to
-                ``self.settings.vllm_chunk_size``.
+            chunk_size: Maximum *tokens* per chunk.
 
         Returns:
             List of text chunks.
         """
-        if chunk_size is None:
-            chunk_size = self.settings.vllm_chunk_size
 
         # Split text into logical blocks separated by blank lines
         blocks = self._split_into_blocks(text)
 
+        # Create a splitter that measures size in tokens
+        splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            encoding_name=self.settings.vllm_tiktoken_encoding_name,
+            # Maximum number of tokens per chunk
+            chunk_size=chunk_size,
+            # Number of overlapping tokens
+            chunk_overlap=0,
+            # Keeps the separator at the end of the previous chunk,
+            # required to keep the sentence dot at the end of a chunk.
+            keep_separator="end",
+            # It tries to split by paragraphs, then lines, then words
+            separators=["\n\n", "\n", ".", " ", ""]
+        )
+
+
         chunks: List[str] = []
-        current_chunk_parts: List[str] = []
-        current_tokens = 0
 
         for block in blocks:
-            block_tokens = self._count_tokens(block)
 
-            # If adding this block exceeds the budget, flush the current chunk
-            if current_chunk_parts and (current_tokens + block_tokens) > chunk_size:
-                chunks.append("\n\n".join(current_chunk_parts))
-                current_chunk_parts = []
-                current_tokens = 0
-
-            # If a single block exceeds the budget, split with token overlap via
-            # langchain-text-splitters.
-            if block_tokens > chunk_size:
-                if current_chunk_parts:
-                    chunks.append("\n\n".join(current_chunk_parts))
-                    current_chunk_parts = []
-                    current_tokens = 0
-                chunks.extend(self._split_large_block_with_overlap(block, chunk_size))
-            else:
-                current_chunk_parts.append(block)
-                current_tokens += block_tokens
-
-        # Flush remaining content
-        if current_chunk_parts:
-            chunks.append("\n\n".join(current_chunk_parts))
+            chunks.extend([chunk for chunk in splitter.split_text(block) if chunk.strip()])
 
         return chunks
 
-    def _split_large_block_with_overlap(self, block: str, chunk_size: int) -> List[str]:
-        """
-        Split an oversized block using langchain token splitters with overlap.
-        """
-        if chunk_size <= 0:
-            return [block]
-
-        overlap = self._compute_large_block_overlap(chunk_size)
-        splitter = TokenTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=overlap,
-            encoding_name="cl100k_base",
-        )
-        split_chunks = [chunk for chunk in splitter.split_text(block) if chunk.strip()]
-        if split_chunks:
-            return split_chunks
-
-        return self._split_large_block(block, chunk_size * 4)
-
-    def _compute_large_block_overlap(self, chunk_size: int) -> int:
-        """Compute bounded overlap tokens for large-block chunk splitting."""
-        if chunk_size <= 1:
-            return 0
-        overlap = max(
-            self.settings.vllm_langchain_min_chunk_overlap,
-            int(chunk_size * self.settings.vllm_langchain_chunk_overlap_ratio),
-        )
-        overlap = min(overlap, self.settings.vllm_langchain_max_chunk_overlap)
-        return min(overlap, chunk_size - 1)
 
     @staticmethod
     def _split_into_blocks(text: str) -> List[str]:
@@ -1149,37 +1113,3 @@ class VllmWorker:
                 blocks.append(block_text)
 
         return blocks
-
-    @staticmethod
-    def _split_large_block(block: str, char_budget: int) -> List[str]:
-        """
-        Split an oversized block into smaller chunks by line boundaries.
-
-        Used as a fallback when a single logical Markdown block (e.g., a very
-        large table or code block) exceeds the character budget.
-
-        Args:
-            block: The oversized text block.
-            char_budget: Maximum characters per chunk.
-
-        Returns:
-            List of sub-chunks.
-        """
-        lines = block.split("\n")
-        chunks: List[str] = []
-        current_lines: List[str] = []
-        current_len = 0
-
-        for line in lines:
-            line_len = len(line) + 1  # +1 for the newline separator
-            if current_lines and (current_len + line_len) > char_budget:
-                chunks.append("\n".join(current_lines))
-                current_lines = []
-                current_len = 0
-            current_lines.append(line)
-            current_len += line_len
-
-        if current_lines:
-            chunks.append("\n".join(current_lines))
-
-        return chunks

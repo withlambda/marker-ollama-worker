@@ -135,6 +135,18 @@ class TestVllmSettingsDefaults(unittest.TestCase):
         settings = _make_vllm_settings(cfg, self.model_dir)
         self.assertEqual(settings.vllm_chunk_workers, 16)
 
+    def test_default_token_safety_margin(self):
+        """Verify default vllm_chat_completion_token_safety_margin value."""
+        cfg = _make_global_config(self.tmp_dir)
+        settings = _make_vllm_settings(cfg, self.model_dir)
+        self.assertEqual(settings.vllm_chat_completion_token_safety_margin, 128)
+
+    def test_default_tiktoken_encoding_name(self):
+        """Verify default vllm_tiktoken_encoding_name value."""
+        cfg = _make_global_config(self.tmp_dir)
+        settings = _make_vllm_settings(cfg, self.model_dir)
+        self.assertEqual(settings.vllm_tiktoken_encoding_name, "gpt2")
+
     def test_optional_fields_are_none_by_default(self):
         """Verify optional prompt fields default to None."""
         cfg = _make_global_config(self.tmp_dir)
