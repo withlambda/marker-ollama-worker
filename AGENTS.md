@@ -61,7 +61,7 @@ When generating or modifying code, the agent must ensure:
 
 ## Skill Registry (`.junie/skills`)
 
-Reusable workflows are defined as standalone skill files under `.junie/skills/`.
+Reusable workflows are defined as skill folders under `.junie/skills/`, each with a required `SKILL.md` file.
 
 Each skill file uses the same structure:
 - **Trigger**
@@ -74,14 +74,14 @@ Each skill file uses the same structure:
 
 Registered skills:
 
-1. `/plan <feature-name> <feature-description>` → `.junie/skills/plan_feature.md`
-2. `/review-plan <feature-name>` → `.junie/skills/review_plan.md`
-3. `/execute-plan <feature-name>` → `.junie/skills/execute_plan.md`
-4. `/review-code` → `.junie/skills/review_code.md`
-5. `/add-src-docs` → `.junie/skills/add_src_docs.md`
-6. `/update-src-docs` → `.junie/skills/update_src_docs.md`
-7. `/update-readme` → `.junie/skills/update_readme.md`
-8. `/review-all` → `.junie/skills/review_all.md`
+1. `/plan <feature-name> <feature-description>` → `.junie/skills/plan-feature/SKILL.md`
+2. `/review-plan <feature-name>` → `.junie/skills/review-plan/SKILL.md`
+3. `/execute-plan <feature-name>` → `.junie/skills/execute-plan/SKILL.md`
+4. `/review-code` → `.junie/skills/review-code/SKILL.md`
+5. `/add-src-docs` → `.junie/skills/add-src-docs/SKILL.md`
+6. `/update-src-docs` → `.junie/skills/update-src-docs/SKILL.md`
+7. `/update-readme` → `.junie/skills/update-readme/SKILL.md`
+8. `/review-all` → `.junie/skills/review-all/SKILL.md`
 
 **Key principle for `/review-all`**: It is a review-and-implement workflow, not review-only. Identified improvements must be applied directly.
 
