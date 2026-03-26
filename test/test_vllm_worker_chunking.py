@@ -4,7 +4,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -20,62 +20,55 @@ def _make_worker(chunk_size: int = 100) -> VllmWorker:
         vllm_host="127.0.0.1",
         vllm_port=8001,
         vllm_chunk_size=chunk_size,
-        vllm_langchain_chunk_overlap_ratio=0.1,
-        vllm_langchain_min_chunk_overlap=32,
-        vllm_langchain_max_chunk_overlap=256,
         vllm_tiktoken_encoding_name="gpt2",
     )
     return VllmWorker(settings=settings)
 
 
 class TestVllmWorkerChunking(unittest.TestCase):
-    """Validate mandatory langchain-backed chunk splitting behavior."""
+    """Validate langchain-backed chunk splitting behavior."""
 
-    def test_chunk_text_uses_langchain_splitter_for_oversized_blocks(self):
-        """Oversized markdown blocks should be split via token splitter with overlap."""
+    def test_chunk_text_uses_langchain_splitter_for_blocks(self):
+        """Markdown blocks should be split via RecursiveCharacterTextSplitter without overlap."""
         worker = _make_worker(chunk_size=100)
 
-        splitter_inits = []
+        splitter_mock = MagicMock()
+        # Mock split_text to return different results based on input
+        def mock_split(text):
+            if text == "small":
+                return ["small"]
+            return ["large-part-1", "large-part-2"]
 
-        class FakeTokenTextSplitter:
-            def __init__(self, chunk_size, chunk_overlap, encoding_name):
-                splitter_inits.append((chunk_size, chunk_overlap, encoding_name))
+        splitter_mock.split_text.side_effect = mock_split
 
-            def split_text(self, _text):
-                return ["large-part-1", "large-part-2"]
+        with patch.object(worker, "_split_into_blocks", return_value=["small", "large"]), \
+             patch("vllm_worker.RecursiveCharacterTextSplitter.from_tiktoken_encoder", return_value=splitter_mock) as from_tiktoken_mock:
 
-        with patch.object(worker, "_split_into_blocks", return_value=["small", "large"]), patch.object(
-            worker,
-            "_count_tokens",
-            side_effect=[10, 180],
-        ), patch("vllm_worker.TokenTextSplitter", FakeTokenTextSplitter):
             chunks = worker._chunk_text("ignored", chunk_size=100)
 
+        # In the new simplified logic, blocks are NOT packed.
         self.assertEqual(chunks, ["small", "large-part-1", "large-part-2"])
-        self.assertEqual(splitter_inits, [(100, 32, "gpt2")])
 
-    def test_split_large_block_raises_when_splitter_fails(self):
+        # Verify splitter initialization
+        from_tiktoken_mock.assert_called_once()
+        _, kwargs = from_tiktoken_mock.call_args
+        self.assertEqual(kwargs["chunk_size"], 100)
+        self.assertEqual(kwargs["chunk_overlap"], 0)
+        self.assertEqual(kwargs["encoding_name"], "gpt2")
+
+    def test_chunk_text_raises_when_splitter_fails(self):
         """Errors from token splitter must propagate for required dependencies."""
         worker = _make_worker(chunk_size=50)
 
-        class FailingTokenTextSplitter:
-            def __init__(self, chunk_size, chunk_overlap, encoding_name):
-                self.chunk_size = chunk_size
-                self.chunk_overlap = chunk_overlap
-                self.encoding_name = encoding_name
+        with patch("vllm_worker.RecursiveCharacterTextSplitter.from_tiktoken_encoder") as from_tiktoken_mock, \
+             patch.object(worker, "_split_into_blocks", return_value=["oversized"]):
 
-            def split_text(self, _text):
-                raise RuntimeError("split failed")
+            splitter_mock = MagicMock()
+            splitter_mock.split_text.side_effect = RuntimeError("split failed")
+            from_tiktoken_mock.return_value = splitter_mock
 
-        with patch("vllm_worker.TokenTextSplitter", FailingTokenTextSplitter), patch.object(
-            worker,
-            "_split_large_block",
-            return_value=["fallback"],
-        ) as fallback_mock:
             with self.assertRaisesRegex(RuntimeError, "split failed"):
-                worker._split_large_block_with_overlap("oversized", 50)
-
-        fallback_mock.assert_not_called()
+                worker._chunk_text("ignored", chunk_size=50)
 
 
 if __name__ == "__main__":

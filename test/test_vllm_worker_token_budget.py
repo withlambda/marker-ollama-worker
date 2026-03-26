@@ -28,10 +28,8 @@ def _make_worker(max_model_len: int = 100) -> VllmWorker:
         vllm_health_check_interval=2.0,
         vllm_chat_completion_token_safety_margin=64,
         vllm_min_completion_tokens=1,
-        vllm_langchain_chunk_overlap_ratio=0.1,
-        vllm_langchain_min_chunk_overlap=32,
-        vllm_langchain_max_chunk_overlap=256,
         vllm_image_description_max_tokens=1024,
+        vllm_tiktoken_encoding_name="gpt2",
     )
     worker = VllmWorker(settings=settings)
 
