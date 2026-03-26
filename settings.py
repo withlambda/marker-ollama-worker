@@ -210,6 +210,14 @@ class VllmSettings(BaseSettings):
         vllm_retry_delay (float): Delay between retries in seconds.
         vllm_chunk_size (int): Size of text chunks in tokens for the correction phase.
         vllm_chunk_workers (int): Number of async tasks for parallel chunk processing.
+        vllm_shutdown_grace_period (int): Seconds to wait for graceful shutdown before force-kill.
+        vllm_health_check_interval (float): Polling interval in seconds for startup health checks.
+        vllm_chat_completion_token_safety_margin (int): Reserved tokens for chat overhead/stop conditions.
+        vllm_min_completion_tokens (int): Minimum tokens reserved for completion output.
+        vllm_langchain_chunk_overlap_ratio (float): Overlap ratio for splitting oversized blocks.
+        vllm_langchain_min_chunk_overlap (int): Minimum overlap tokens for oversized block splitting.
+        vllm_langchain_max_chunk_overlap (int): Maximum overlap tokens for oversized block splitting.
+        vllm_image_description_max_tokens (int): Upper bound for generated tokens in image descriptions.
         vllm_block_correction_prompt_key (str): Key into the prompt library (optional).
         vllm_block_correction_prompt (str): Custom block correction prompt override (optional).
         vllm_image_description_prompt (str): Custom vision prompt for image descriptions (optional).
@@ -273,6 +281,38 @@ class VllmSettings(BaseSettings):
     vllm_chunk_workers: int = Field(
         16,
         validation_alias="MARKLLM_VLLM_CHUNK_WORKERS"
+    )
+    vllm_shutdown_grace_period: int = Field(
+        10,
+        validation_alias="MARKLLM_VLLM_SHUTDOWN_GRACE_PERIOD"
+    )
+    vllm_health_check_interval: float = Field(
+        2.0,
+        validation_alias="MARKLLM_VLLM_HEALTH_CHECK_INTERVAL"
+    )
+    vllm_chat_completion_token_safety_margin: int = Field(
+        64,
+        validation_alias="MARKLLM_VLLM_CHAT_COMPLETION_TOKEN_SAFETY_MARGIN"
+    )
+    vllm_min_completion_tokens: int = Field(
+        1,
+        validation_alias="MARKLLM_VLLM_MIN_COMPLETION_TOKENS"
+    )
+    vllm_langchain_chunk_overlap_ratio: float = Field(
+        0.1,
+        validation_alias="MARKLLM_VLLM_LANGCHAIN_CHUNK_OVERLAP_RATIO"
+    )
+    vllm_langchain_min_chunk_overlap: int = Field(
+        32,
+        validation_alias="MARKLLM_VLLM_LANGCHAIN_MIN_CHUNK_OVERLAP"
+    )
+    vllm_langchain_max_chunk_overlap: int = Field(
+        256,
+        validation_alias="MARKLLM_VLLM_LANGCHAIN_MAX_CHUNK_OVERLAP"
+    )
+    vllm_image_description_max_tokens: int = Field(
+        1024,
+        validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_MAX_TOKENS"
     )
 
     # Prompt configuration

@@ -24,6 +24,7 @@ def _make_worker() -> VllmWorker:
         vllm_port=8001,
         vllm_chunk_size=1024,
         vllm_max_model_len=8192,
+        vllm_chat_completion_token_safety_margin=64,
     )
     return VllmWorker(settings=settings)
 

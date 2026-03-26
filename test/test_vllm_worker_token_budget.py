@@ -1,6 +1,7 @@
 """Tests for vLLM chunk request token budgeting."""
 
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -23,6 +24,14 @@ def _make_worker(max_model_len: int = 100) -> VllmWorker:
         vllm_max_model_len=max_model_len,
         vllm_max_retries=0,
         vllm_retry_delay=0.01,
+        vllm_shutdown_grace_period=10,
+        vllm_health_check_interval=2.0,
+        vllm_chat_completion_token_safety_margin=64,
+        vllm_min_completion_tokens=1,
+        vllm_langchain_chunk_overlap_ratio=0.1,
+        vllm_langchain_min_chunk_overlap=32,
+        vllm_langchain_max_chunk_overlap=256,
+        vllm_image_description_max_tokens=1024,
     )
     worker = VllmWorker(settings=settings)
 
@@ -56,7 +65,16 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
             result = worker.process_text("original", "system", 1)
 
         self.assertEqual(result, "corrected")
-        chunk_mock.assert_called_once_with("original", 5)
+        chunk_mock.assert_called_once_with("original", 3)
+
+    def test_effective_chunk_size_uses_input_output_ratio(self):
+        """Chunk budget should be computed with the ratio formula using context budget / (1 + r)."""
+        worker = _make_worker(max_model_len=100)
+
+        with patch.object(worker, "_count_tokens", return_value=30):
+            effective_chunk_size = worker._compute_effective_chunk_size("system", r=1.0)
+
+        self.assertEqual(effective_chunk_size, 3)
 
     def test_process_text_returns_original_when_prompt_exhausts_chunk_budget(self):
         """process_text should skip chunking/API work when prompt leaves no context room."""
@@ -98,6 +116,52 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
             result = await worker._process_single_chunk_async("original", "system", 0)
 
         self.assertEqual(result, "original")
+        create_mock = worker._client.chat.completions.create
+        self.assertEqual(create_mock.await_count, 0)
+
+    async def test_image_description_uses_template_only_in_system_prompt(self):
+        """Image description should not duplicate prompt template in user instruction."""
+        worker = _make_worker(max_model_len=100)
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+            tmp_file.write(b"fake-image-bytes")
+            image_path = Path(tmp_file.name)
+
+        prompt_template = "Custom image-description instructions"
+
+        try:
+            with patch.object(worker, "_count_tokens", return_value=1) as token_counter:
+                result = await worker._describe_single_image_async(image_path, prompt_template, image_index=0)
+        finally:
+            image_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, "corrected")
+        create_mock = worker._client.chat.completions.create
+        self.assertEqual(create_mock.await_count, 1)
+
+        messages = create_mock.await_args.kwargs["messages"]
+        self.assertEqual(messages[0]["content"], prompt_template)
+        self.assertEqual(messages[1]["content"][1]["text"], "Describe the attached image and output only the description text.")
+        self.assertNotIn(prompt_template, messages[1]["content"][1]["text"])
+
+        token_count_inputs = [call.args[0] for call in token_counter.call_args_list]
+        self.assertEqual(token_count_inputs, [prompt_template, "Describe the attached image and output only the description text."])
+
+    async def test_image_description_skips_api_call_when_prompt_exceeds_context(self):
+        """Image description should return fallback when prompt leaves no completion budget."""
+        worker = _make_worker(max_model_len=100)
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
+            tmp_file.write(b"fake-image-bytes")
+            image_path = Path(tmp_file.name)
+
+        try:
+            with patch.object(worker, "_count_tokens", side_effect=[80, 40]):
+                result = await worker._describe_single_image_async(image_path, "system", image_index=0)
+        finally:
+            image_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, "> **Image Description:** [Description unavailable]")
         create_mock = worker._client.chat.completions.create
         self.assertEqual(create_mock.await_count, 0)
 

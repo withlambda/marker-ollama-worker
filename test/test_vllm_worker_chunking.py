@@ -20,6 +20,9 @@ def _make_worker(chunk_size: int = 100) -> VllmWorker:
         vllm_host="127.0.0.1",
         vllm_port=8001,
         vllm_chunk_size=chunk_size,
+        vllm_langchain_chunk_overlap_ratio=0.1,
+        vllm_langchain_min_chunk_overlap=32,
+        vllm_langchain_max_chunk_overlap=256,
     )
     return VllmWorker(settings=settings)
 

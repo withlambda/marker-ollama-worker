@@ -49,23 +49,6 @@ from settings import VllmSettings
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Default timeout (seconds) for graceful shutdown before SIGKILL
-_SHUTDOWN_GRACE_PERIOD = 10
-
-# Health check polling interval in seconds
-_HEALTH_CHECK_INTERVAL = 2
-
-# Reserve context for chat-format overhead and generation stop conditions.
-_CHAT_COMPLETION_TOKEN_SAFETY_MARGIN = 64
-
-# Ensure each chunk leaves at least one token for generation.
-_MIN_COMPLETION_TOKENS = 1
-
-# Token overlap ratio used by langchain-text-splitters for oversized blocks.
-_LANGCHAIN_CHUNK_OVERLAP_RATIO = 0.1
-_LANGCHAIN_MIN_CHUNK_OVERLAP = 32
-_LANGCHAIN_MAX_CHUNK_OVERLAP = 256
-
 _T = TypeVar("_T")
 
 
@@ -201,24 +184,25 @@ class VllmWorker:
         """
         Gracefully shut down the vLLM server subprocess.
 
-        Sends SIGTERM, waits up to ``_SHUTDOWN_GRACE_PERIOD`` seconds,
+        Sends SIGTERM, waits up to ``vllm_shutdown_grace_period`` seconds,
         then sends SIGKILL if the process is still running.
         """
         if self.process is None:
             return
 
         pid = self.process.pid
+        shutdown_grace_period = self.settings.vllm_shutdown_grace_period
         logger.info(f"Stopping vLLM server (PID {pid})...")
 
         try:
             # Send SIGTERM for graceful shutdown
             self.process.send_signal(signal.SIGTERM)
             try:
-                self.process.wait(timeout=_SHUTDOWN_GRACE_PERIOD)
+                self.process.wait(timeout=shutdown_grace_period)
                 logger.info(f"vLLM server (PID {pid}) terminated gracefully.")
             except subprocess.TimeoutExpired:
                 logger.warning(
-                    f"vLLM server (PID {pid}) did not exit within {_SHUTDOWN_GRACE_PERIOD}s. "
+                    f"vLLM server (PID {pid}) did not exit within {shutdown_grace_period}s. "
                     f"Sending SIGKILL..."
                 )
                 self.process.kill()
@@ -322,7 +306,7 @@ class VllmWorker:
         if not self.settings.vllm_model:
             raise ValueError("vllm_model not set for processing")
 
-        effective_chunk_size = self._compute_effective_chunk_size(prompt_template)
+        effective_chunk_size = self._compute_effective_chunk_size(prompt_template, r=1.0)
         if effective_chunk_size <= 0:
             logger.error(
                 "Skipping OCR error correction: prompt token usage leaves no room "
@@ -558,21 +542,27 @@ class VllmWorker:
         available_tokens = (
             self.settings.vllm_max_model_len
             - prompt_tokens
-            - _CHAT_COMPLETION_TOKEN_SAFETY_MARGIN
+            - self.settings.vllm_chat_completion_token_safety_margin
         )
         if available_tokens <= 0:
             return 0
         return min(self.settings.vllm_max_model_len, available_tokens)
 
-    def _compute_effective_chunk_size(self, system_prompt: str) -> int:
-        """Compute prompt-aware chunk-size budget for `_chunk_text`."""
+    def _compute_effective_chunk_size(self, system_prompt: str, r: float) -> int:
+        """Compute a prompt-aware chunk-size budget using an input-to-output token ratio."""
+        if r < 0:
+            raise ValueError("Input-to-output ratio 'r' must be non-negative.")
+
         prompt_tokens = self._count_tokens(system_prompt)
-        max_chunk_tokens_from_context = (
+        context_budget = (
             self.settings.vllm_max_model_len
             - prompt_tokens
-            - _CHAT_COMPLETION_TOKEN_SAFETY_MARGIN
-            - _MIN_COMPLETION_TOKENS
+            - self.settings.vllm_chat_completion_token_safety_margin
         )
+        if context_budget <= 0:
+            return 0
+
+        max_chunk_tokens_from_context = int(context_budget / (1.0 + r))
         if max_chunk_tokens_from_context <= 0:
             return 0
         return min(self.settings.vllm_chunk_size, max_chunk_tokens_from_context)
@@ -653,8 +643,8 @@ class VllmWorker:
 
         Args:
             image_path: Path to the image file.
-            prompt_template: Optional custom prompt prefix or template for the description.
-                             If provided, it's combined with a default instruction.
+            prompt_template: Optional custom system instruction for the description.
+                             If provided, it replaces the default system prompt.
             image_index: Zero-based image index for logging.
 
         Returns:
@@ -669,10 +659,9 @@ class VllmWorker:
             "subject and context. Output only the description text."
         )
 
-        # Combine hardcoded instruction with user prompt template
-        user_instruction = "Provide a precise and concise description of this image."
-        if prompt_template:
-            user_instruction = f"{prompt_template}\n\n{user_instruction}"
+        # Keep request-level user instruction short; avoid repeating template text
+        # when it is already provided as the system prompt.
+        user_instruction = "Describe the attached image and output only the description text."
 
         fallback_msg = "> **Image Description:** [Description unavailable]"
 
@@ -699,6 +688,25 @@ class VllmWorker:
 
         for attempt in range(self.settings.vllm_max_retries + 1):
             try:
+                prompt_tokens = self._count_tokens(system_prompt) + self._count_tokens(user_instruction)
+                available_completion_tokens = (
+                    self.settings.vllm_max_model_len
+                    - prompt_tokens
+                    - self.settings.vllm_chat_completion_token_safety_margin
+                )
+                max_description_tokens = min(
+                    self.settings.vllm_image_description_max_tokens,
+                    available_completion_tokens,
+                )
+                if max_description_tokens < self.settings.vllm_min_completion_tokens:
+                    logger.error(
+                        "Skipping image %s description: prompt token usage leaves no room "
+                        "for completion (max_model_len=%s).",
+                        image_path.name,
+                        self.settings.vllm_max_model_len,
+                    )
+                    return fallback_msg
+
                 response = await self._client.chat.completions.create(
                     model=self.settings.vllm_model,
                     messages=[
@@ -717,7 +725,7 @@ class VllmWorker:
                             ]
                         ),
                     ],
-                    max_tokens=1024, # Optimized default for vision tasks
+                    max_tokens=max_description_tokens,
                 )
 
                 content = response.choices[0].message.content
@@ -785,7 +793,7 @@ class VllmWorker:
         """
         Poll the vLLM health endpoint until the server is ready.
 
-        Retries every ``_HEALTH_CHECK_INTERVAL`` seconds until either HTTP 200
+        Retries every ``vllm_health_check_interval`` seconds until either HTTP 200
         is received or ``vllm_startup_timeout`` elapses.
 
         If the health check fails or times out, the subprocess's stdout/stderr
@@ -797,6 +805,7 @@ class VllmWorker:
         """
         health_url = f"http://localhost:{self.settings.vllm_port}/health"
         deadline = time.time() + self.settings.vllm_startup_timeout
+        poll_interval = self.settings.vllm_health_check_interval
 
         logger.info(
             f"Polling vLLM health endpoint ({health_url}) "
@@ -836,7 +845,7 @@ class VllmWorker:
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.TimeoutException):
                 pass  # Server is not ready yet
 
-            time.sleep(_HEALTH_CHECK_INTERVAL)
+            time.sleep(poll_interval)
 
         # Timeout reached — collect subprocess output and terminate
         output = ""
@@ -1047,13 +1056,15 @@ class VllmWorker:
 
         return self._split_large_block(block, chunk_size * 4)
 
-    @staticmethod
-    def _compute_large_block_overlap(chunk_size: int) -> int:
+    def _compute_large_block_overlap(self, chunk_size: int) -> int:
         """Compute bounded overlap tokens for large-block chunk splitting."""
         if chunk_size <= 1:
             return 0
-        overlap = max(_LANGCHAIN_MIN_CHUNK_OVERLAP, int(chunk_size * _LANGCHAIN_CHUNK_OVERLAP_RATIO))
-        overlap = min(overlap, _LANGCHAIN_MAX_CHUNK_OVERLAP)
+        overlap = max(
+            self.settings.vllm_langchain_min_chunk_overlap,
+            int(chunk_size * self.settings.vllm_langchain_chunk_overlap_ratio),
+        )
+        overlap = min(overlap, self.settings.vllm_langchain_max_chunk_overlap)
         return min(overlap, chunk_size - 1)
 
     @staticmethod
