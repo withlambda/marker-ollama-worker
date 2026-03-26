@@ -530,8 +530,10 @@ class VllmWorker:
                     continue
                 else:
                     logger.error(
-                        f"Fatal error processing chunk {chunk_index} "
-                        f"after {attempt + 1} attempts: {e}"
+                        f"Fatal error processing chunk {chunk_index} after {attempt + 1} attempts "
+                        f"(${len(chunk)} chunk size, {len(system_prompt)} prompt size, {max_completion_tokens} "
+                        f"max completion_tokens, {len(chunk)+len(system_prompt)+max_completion_tokens} sum,"
+                        f"{self.settings.vllm_max_model_len} allowed total): {e}"
                     )
                     return chunk  # fallback to the original
 
