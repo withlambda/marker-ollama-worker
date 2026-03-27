@@ -127,7 +127,7 @@ class TestVllmSettingsDefaults(unittest.TestCase):
         """Verify default vllm_chunk_size value."""
         cfg = _make_global_config(self.tmp_dir)
         settings = _make_vllm_settings(cfg, self.model_dir)
-        self.assertEqual(settings.vllm_chunk_size, 4000)
+        self.assertEqual(settings.vllm_chunk_size, settings.vllm_max_model_len // 2)
 
     def test_default_chunk_workers(self):
         """Verify default vllm_chunk_workers value."""
