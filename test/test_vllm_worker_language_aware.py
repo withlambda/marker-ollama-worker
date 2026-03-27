@@ -2,19 +2,33 @@ import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
 import sys
+import types
+from importlib.machinery import ModuleSpec
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def _make_module(name: str):
+    module = types.ModuleType(name)
+    module.__spec__ = ModuleSpec(name, loader=None)
+    if name == "torch.multiprocessing":
+        module.set_start_method = lambda *_args, **_kwargs: None
+    return module
 
 # Mock dependencies that might be missing or cause issues in this environment
 with patch.dict(sys.modules, {
-    "runpod": MagicMock(),
-    "torch": MagicMock(),
-    "torch.multiprocessing": MagicMock(),
-    "marker": MagicMock(),
-    "marker.converters": MagicMock(),
-    "marker.converters.pdf": MagicMock(),
-    "marker.models": MagicMock(),
-    "marker.config": MagicMock(),
-    "marker.config.parser": MagicMock(),
-    "marker.output": MagicMock(),
+    "runpod": _make_module("runpod"),
+    "torch": _make_module("torch"),
+    "torch.multiprocessing": _make_module("torch.multiprocessing"),
+    "marker": _make_module("marker"),
+    "marker.converters": _make_module("marker.converters"),
+    "marker.converters.pdf": _make_module("marker.converters.pdf"),
+    "marker.models": _make_module("marker.models"),
+    "marker.config": _make_module("marker.config"),
+    "marker.config.parser": _make_module("marker.config.parser"),
+    "marker.output": _make_module("marker.output"),
 }):
     from vllm_worker import VllmWorker
     from settings import VllmSettings, GlobalConfig
@@ -51,12 +65,20 @@ class TestVllmWorkerLanguageAware(unittest.TestCase):
 
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "This is a description in German."
+        mock_response.choices[0].message.content = '{"text": "This is a description in German."}'
         self.mock_client.chat.completions.create.return_value = mock_response
 
         image_path = Path("test.png")
         # Mock image read
-        with patch.object(Path, "read_bytes", return_value=b"fake-image-data"):
+        with patch.object(Path, "read_bytes", return_value=b"fake-image-data"), patch.object(
+            worker.image_token_calculator,
+            "calculate_image_tokens",
+            return_value=128,
+        ), patch.object(
+            worker,
+            "_compute_max_completion_tokens",
+            return_value=128,
+        ):
             import asyncio
             description = asyncio.run(worker._describe_single_image_async(
                 image_path,
@@ -71,7 +93,7 @@ class TestVllmWorkerLanguageAware(unittest.TestCase):
         call_args = self.mock_client.chat.completions.create.call_args
         messages = call_args.kwargs['messages']
         system_msg = next(m for m in messages if m['role'] == 'system')
-        self.assertIn("Respond in German.", system_msg['content'])
+        self.assertIn("You must answer in German.", system_msg['content'])
 
     @patch('vllm_worker.openai.AsyncOpenAI')
     @patch('vllm_worker.VllmWorker.start_server')
@@ -82,11 +104,19 @@ class TestVllmWorkerLanguageAware(unittest.TestCase):
 
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "English description."
+        mock_response.choices[0].message.content = '{"text": "English description."}'
         self.mock_client.chat.completions.create.return_value = mock_response
 
         image_path = Path("test.png")
-        with patch.object(Path, "read_bytes", return_value=b"fake-image-data"):
+        with patch.object(Path, "read_bytes", return_value=b"fake-image-data"), patch.object(
+            worker.image_token_calculator,
+            "calculate_image_tokens",
+            return_value=128,
+        ), patch.object(
+            worker,
+            "_compute_max_completion_tokens",
+            return_value=128,
+        ):
             import asyncio
             description = asyncio.run(worker._describe_single_image_async(
                 image_path,

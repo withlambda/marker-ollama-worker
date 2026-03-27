@@ -714,10 +714,21 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"Failed to delete input file {file_to_process}: {e}")
 
+    if failed_post_processing:
+        return {
+            "status": "partially_completed",
+            "message": (
+                f"{len(processed_files) - len(failed_post_processing)} of {len(processed_files)} "
+                f"input files from {input_path.absolute()} were processed successfully; "
+                f"{len(failed_post_processing)} failed during LLM post-processing."
+            ),
+            "failures": failed_post_processing,
+        }
+
     return {
-        "status": "completed" if not failed_post_processing else "partially_completed",
-        "message": f"All {len(processed_files)} input files of {input_path.absolute()} were processed successfully.",
-        "failures": failed_post_processing if failed_post_processing else None
+        "status": "completed",
+        "message": f"All {len(processed_files)} input files from {input_path.absolute()} were processed successfully.",
+        "failures": None,
     }
 
 if __name__ == "__main__":

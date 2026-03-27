@@ -1,5 +1,6 @@
 """Tests for vLLM chunk request token budgeting."""
 
+import os
 import sys
 import tempfile
 import types
@@ -12,11 +13,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from vllm_worker import VllmWorker
+from settings import VllmSettings, GlobalConfig
 
 
 def _make_worker(max_model_len: int = 100) -> VllmWorker:
-    """Create a lightweight worker configured for token-budget tests."""
-    settings = types.SimpleNamespace(
+    """Create a worker configured for token-budget tests with real settings models."""
+    os.environ["VOLUME_ROOT_MOUNT_PATH"] = "/tmp"
+    os.environ["VRAM_GB_TOTAL"] = "24"
+    settings = VllmSettings(
+        app_config=GlobalConfig(),
+        vllm_vram_gb_model=4,
         vllm_model="stub-model",
         vllm_host="127.0.0.1",
         vllm_port=8001,
@@ -30,11 +36,20 @@ def _make_worker(max_model_len: int = 100) -> VllmWorker:
         vllm_min_completion_tokens=1,
         vllm_image_description_max_tokens=1024,
         vllm_tiktoken_encoding_name="gpt2",
+        vllm_temperature_text_chunk_correction=0.0,
+        vllm_temperature_image_description=0.0,
     )
+    settings.vllm_chunk_output_formatting_instruction = "Return only JSON with a text field."
+    settings.vllm_image_description_output_formatting_instruction = "Return only JSON with a text field."
+    settings.vllm_output_json_schema = {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    }
     worker = VllmWorker(settings=settings)
 
     response = types.SimpleNamespace(
-        choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="corrected"))]
+        choices=[types.SimpleNamespace(message=types.SimpleNamespace(content='{"text": "corrected"}'))]
     )
     worker._client = types.SimpleNamespace(
         chat=types.SimpleNamespace(
@@ -51,7 +66,7 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
         """process_text should reduce chunk_size by prompt/context budget before chunking."""
         worker = _make_worker(max_model_len=100)
 
-        with patch.object(worker, "_count_tokens", return_value=30), patch.object(
+        with patch.object(worker, "_count_tokens", side_effect=[10, 2]), patch.object(
             worker,
             "_chunk_text",
             return_value=["alpha"],
@@ -63,16 +78,23 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
             result = worker.process_text("original", "system", 1)
 
         self.assertEqual(result, "corrected")
-        chunk_mock.assert_called_once_with("original", 3)
+        chunk_mock.assert_called_once_with("original", 10)
 
     def test_effective_chunk_size_uses_input_output_ratio(self):
         """Chunk budget should be computed with the ratio formula using context budget / (1 + r)."""
-        worker = _make_worker(max_model_len=100)
+        worker = _make_worker(max_model_len=200)
 
-        with patch.object(worker, "_count_tokens", return_value=30):
+        with patch.object(worker, "_count_tokens", side_effect=[30, 30]):
             effective_chunk_size = worker._compute_effective_chunk_size("system", r=1.0)
 
-        self.assertEqual(effective_chunk_size, 3)
+        expected_context_budget = (
+            worker.settings.vllm_max_model_len
+            - 30
+            - 30
+            - worker.settings.vllm_chat_completion_token_safety_margin
+        )
+        expected_chunk_size = min(worker.settings.vllm_chunk_size, int(expected_context_budget / 2.0))
+        self.assertEqual(effective_chunk_size, expected_chunk_size)
 
     def test_process_text_returns_original_when_prompt_exhausts_chunk_budget(self):
         """process_text should skip chunking/API work when prompt leaves no context room."""
@@ -128,7 +150,11 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
         prompt_template = "Custom image-description instructions"
 
         try:
-            with patch.object(worker, "_count_tokens", return_value=1) as token_counter:
+            with patch.object(worker, "_count_tokens", return_value=1) as token_counter, patch.object(
+                worker.image_token_calculator,
+                "calculate_image_tokens",
+                return_value=1,
+            ):
                 result = await worker._describe_single_image_async(image_path, prompt_template, image_index=0)
         finally:
             image_path.unlink(missing_ok=True)
@@ -138,12 +164,13 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(create_mock.await_count, 1)
 
         messages = create_mock.await_args.kwargs["messages"]
-        self.assertEqual(messages[0]["content"], prompt_template)
-        self.assertEqual(messages[1]["content"][1]["text"], "Describe the attached image and output only the description text.")
+        self.assertIn(prompt_template, messages[0]["content"])
+        self.assertEqual(messages[1]["content"][1]["text"], "### IMAGE TO DESCRIBE\n")
         self.assertNotIn(prompt_template, messages[1]["content"][1]["text"])
 
-        token_count_inputs = [call.args[0] for call in token_counter.call_args_list]
-        self.assertEqual(token_count_inputs, [prompt_template, "Describe the attached image and output only the description text."])
+        self.assertEqual(token_counter.call_count, 1)
+        _, user_instruction = token_counter.call_args.args
+        self.assertEqual(user_instruction, "### IMAGE TO DESCRIBE\n")
 
     async def test_image_description_skips_api_call_when_prompt_exceeds_context(self):
         """Image description should return fallback when prompt leaves no completion budget."""
@@ -154,7 +181,11 @@ class TestVllmWorkerChunkTokenBudget(unittest.IsolatedAsyncioTestCase):
             image_path = Path(tmp_file.name)
 
         try:
-            with patch.object(worker, "_count_tokens", side_effect=[80, 40]):
+            with patch.object(worker, "_count_tokens", return_value=80), patch.object(
+                worker.image_token_calculator,
+                "calculate_image_tokens",
+                return_value=40,
+            ):
                 result = await worker._describe_single_image_async(image_path, "system", image_index=0)
         finally:
             image_path.unlink(missing_ok=True)

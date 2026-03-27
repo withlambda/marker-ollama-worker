@@ -9,6 +9,7 @@ import tempfile
 import types
 import unittest
 from unittest.mock import MagicMock
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -18,21 +19,27 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def _install_dependency_stubs() -> None:
     """Installs lightweight stubs for optional heavy dependencies."""
-    runpod_module = types.ModuleType("runpod")
+    def _make_module(name: str) -> types.ModuleType:
+        module = types.ModuleType(name)
+        module.__spec__ = ModuleSpec(name, loader=None)
+        return module
+
+    runpod_module = _make_module("runpod")
     runpod_module.serverless = types.SimpleNamespace(start=lambda *_args, **_kwargs: None)
     sys.modules.setdefault("runpod", runpod_module)
 
     # openai and vllm are needed for vllm_worker import to succeed
-    openai_module = types.ModuleType("openai")
+    openai_module = _make_module("openai")
+    openai_module.__path__ = []
     openai_module.AsyncOpenAI = MagicMock()
     sys.modules.setdefault("openai", openai_module)
 
-    openai_types_module = types.ModuleType("openai.types")
+    openai_types_module = _make_module("openai.types")
     openai_types_module.__path__ = []
     sys.modules.setdefault("openai.types", openai_types_module)
     openai_module.types = openai_types_module
 
-    openai_types_chat_module = types.ModuleType("openai.types.chat")
+    openai_types_chat_module = _make_module("openai.types.chat")
     openai_types_chat_module.__path__ = []
     openai_types_chat_module.ChatCompletionUserMessageParam = dict
     openai_types_chat_module.ChatCompletionSystemMessageParam = dict
@@ -42,13 +49,17 @@ def _install_dependency_stubs() -> None:
     openai_types_module.chat = openai_types_chat_module
 
     # Some versions of openai import specific params from submodules
-    sys.modules.setdefault("openai.types.chat.chat_completion_content_part_image_param", types.SimpleNamespace(ImageURL=dict))
-    sys.modules.setdefault("openai.types.chat.chat_completion_content_part_text_param", types.SimpleNamespace())
+    openai_image_part_module = _make_module("openai.types.chat.chat_completion_content_part_image_param")
+    openai_image_part_module.ImageURL = dict
+    sys.modules.setdefault("openai.types.chat.chat_completion_content_part_image_param", openai_image_part_module)
 
-    vllm_module = types.ModuleType("vllm")
+    openai_text_part_module = _make_module("openai.types.chat.chat_completion_content_part_text_param")
+    sys.modules.setdefault("openai.types.chat.chat_completion_content_part_text_param", openai_text_part_module)
+
+    vllm_module = _make_module("vllm")
     sys.modules.setdefault("vllm", vllm_module)
 
-    torch_module = types.ModuleType("torch")
+    torch_module = _make_module("torch")
     torch_module.__path__ = []
     torch_module.cuda = types.SimpleNamespace(
         empty_cache=lambda: None,
@@ -59,15 +70,15 @@ def _install_dependency_stubs() -> None:
     )
     sys.modules.setdefault("torch", torch_module)
 
-    torch_mp_module = types.ModuleType("torch.multiprocessing")
+    torch_mp_module = _make_module("torch.multiprocessing")
     torch_mp_module.set_start_method = lambda *_args, **_kwargs: None
     sys.modules.setdefault("torch.multiprocessing", torch_mp_module)
 
-    marker_module = types.ModuleType("marker")
+    marker_module = _make_module("marker")
     sys.modules.setdefault("marker", marker_module)
-    sys.modules.setdefault("marker.converters", types.ModuleType("marker.converters"))
+    sys.modules.setdefault("marker.converters", _make_module("marker.converters"))
 
-    marker_converters_pdf_module = types.ModuleType("marker.converters.pdf")
+    marker_converters_pdf_module = _make_module("marker.converters.pdf")
 
     class DummyPdfConverter:
         def __init__(self, *_args, **_kwargs) -> None:
@@ -79,11 +90,11 @@ def _install_dependency_stubs() -> None:
     marker_converters_pdf_module.PdfConverter = DummyPdfConverter
     sys.modules.setdefault("marker.converters.pdf", marker_converters_pdf_module)
 
-    marker_models_module = types.ModuleType("marker.models")
+    marker_models_module = _make_module("marker.models")
     marker_models_module.create_model_dict = lambda: {}
     sys.modules.setdefault("marker.models", marker_models_module)
 
-    marker_parser_module = types.ModuleType("marker.config.parser")
+    marker_parser_module = _make_module("marker.config.parser")
 
     class DummyConfigParser:
         def __init__(self, *_args, **_kwargs) -> None:
@@ -99,10 +110,10 @@ def _install_dependency_stubs() -> None:
             return None
 
     marker_parser_module.ConfigParser = DummyConfigParser
-    sys.modules.setdefault("marker.config", types.ModuleType("marker.config"))
+    sys.modules.setdefault("marker.config", _make_module("marker.config"))
     sys.modules.setdefault("marker.config.parser", marker_parser_module)
 
-    marker_output_module = types.ModuleType("marker.output")
+    marker_output_module = _make_module("marker.output")
     marker_output_module.text_from_rendered = lambda *_args, **_kwargs: ("", {}, [])
     sys.modules.setdefault("marker.output", marker_output_module)
 
@@ -111,7 +122,7 @@ def _import_handler_module():
     """Imports handler module with dependency stubs when needed."""
     try:
         return importlib.import_module("handler")
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ImportError, ValueError):
         _install_dependency_stubs()
         sys.modules.pop("handler", None)
         return importlib.import_module("handler")

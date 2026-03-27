@@ -97,7 +97,7 @@ class TestVllmSettingsDefaults(unittest.TestCase):
         """Verify default vllm_max_model_len value."""
         cfg = _make_global_config(self.tmp_dir)
         settings = _make_vllm_settings(cfg, self.model_dir)
-        self.assertEqual(settings.vllm_max_model_len, 8192)
+        self.assertEqual(settings.vllm_max_model_len, 16384)
 
     def test_default_startup_timeout(self):
         """Verify default vllm_startup_timeout value."""
@@ -139,7 +139,7 @@ class TestVllmSettingsDefaults(unittest.TestCase):
         """Verify default vllm_chat_completion_token_safety_margin value."""
         cfg = _make_global_config(self.tmp_dir)
         settings = _make_vllm_settings(cfg, self.model_dir)
-        self.assertEqual(settings.vllm_chat_completion_token_safety_margin, 128)
+        self.assertEqual(settings.vllm_chat_completion_token_safety_margin, 50)
 
     def test_default_tiktoken_encoding_name(self):
         """Verify default vllm_tiktoken_encoding_name value."""
@@ -289,10 +289,10 @@ class TestVllmSettingsMaxNumSeqsAutoCalc(unittest.TestCase):
     def test_auto_calc_with_sufficient_vram(self):
         """Auto-calc yields >1 seq when plenty of VRAM is available."""
         # vram_total=24, reserve=4, model=6 => available=14
-        # context_vram = 0.00013 * 8192 ≈ 2.13 => seqs = int(14 / 2.13) = 6
+        # context_vram = 0.00013 * 16384 ≈ 2.13 => seqs = int(14 / 2.13) = 6
         cfg = _make_global_config(self.tmp_dir, VRAM_GB_TOTAL="24", VRAM_GB_RESERVE="4")
         settings = _make_vllm_settings(cfg, self.model_dir, vram_gb_model=6)
-        expected = max(1, int((24 - 4 - 6) // (0.00013 * 8192)))
+        expected = max(1, int((24 - 4 - 6) // (0.00013 * 16384)))
         self.assertEqual(settings.vllm_max_num_seqs, expected)
         self.assertGreater(settings.vllm_max_num_seqs, 1)
 

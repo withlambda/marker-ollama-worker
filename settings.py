@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional, ClassVar, Set
+from typing import Optional, ClassVar, Set, Any
 
 from pydantic import Field, DirectoryPath, field_validator, model_validator, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -89,7 +89,10 @@ class GlobalConfig(BaseSettings):
     )
 
     block_correction_prompts_library: dict[str, str] = Field(
-        default_factory=lambda data: GlobalConfig._load_block_correction_prompts(data["block_correction_prompts_file_path"], GlobalConfig.FILE_ENCODING),
+        default_factory=lambda data: GlobalConfig._load_block_correction_prompts(
+            block_correction_prompts_file_path=data["block_correction_prompts_file_path"],
+            file_encoding=GlobalConfig.FILE_ENCODING
+        ),
         validation_alias="BLOCK_CORRECTION_PROMPTS_LIBRARY",
         frozen=True
     )
@@ -211,7 +214,7 @@ class VllmSettings(BaseSettings):
         vllm_retry_delay (float): Delay between retries in seconds.
         vllm_chunk_size (int): Size of text chunks in tokens for the correction phase.
         vllm_chunk_workers (int): Number of async tasks for parallel chunk processing.
-        vllm_shutdown_grace_period (int): Seconds to wait for graceful shutdown before force-kill.
+        vllm_shutdown_grace_period (int): Seconds to wait for a graceful shutdown before force-kill.
         vllm_health_check_interval (float): Polling interval in seconds for startup health checks.
         vllm_chat_completion_token_safety_margin (int): Reserved tokens for chat overhead/stop conditions.
         vllm_min_completion_tokens (int): Minimum tokens reserved for completion output.
@@ -220,6 +223,12 @@ class VllmSettings(BaseSettings):
         vllm_block_correction_prompt (str): Custom block correction prompt override (optional).
         vllm_image_description_prompt (str): Custom vision prompt for image descriptions (optional).
         vllm_cpu (bool): Whether to run vLLM on CPU (default: False).
+        vllm_temperature_text_chunk_correction (float): Temperature for text chunk correction.
+        vllm_temperature_image_description (float): Temperature for image description generation.
+        vllm_chunk_output_formatting_instruction (str): Formatting instruction for chunked output.
+        vllm_chunk_user_prompt_init (str): Initial prompt for chunked processing.
+        vllm_image_description_output_formatting_instruction (str): Formatting instruction for image description output.
+        vllm_output_json_schema (dict): JSON schema for the output format.
     """
     model_config = SettingsConfigDict(populate_by_name=True, extra='ignore')
 
@@ -241,7 +250,7 @@ class VllmSettings(BaseSettings):
         validation_alias="MARKLLM_VLLM_GPU_UTIL"
     )
     vllm_max_model_len: int = Field(
-        8192,
+        16384,
         validation_alias="MARKLLM_VLLM_MAX_MODEL_LEN"
     )
     vllm_max_num_seqs: int = Field(
@@ -289,7 +298,7 @@ class VllmSettings(BaseSettings):
         validation_alias="MARKLLM_VLLM_HEALTH_CHECK_INTERVAL"
     )
     vllm_chat_completion_token_safety_margin: int = Field(
-        128,
+        50,
         validation_alias="MARKLLM_VLLM_CHAT_COMPLETION_TOKEN_SAFETY_MARGIN"
     )
     vllm_tiktoken_encoding_name: str = Field(
@@ -319,6 +328,42 @@ class VllmSettings(BaseSettings):
         validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_PROMPT"
     )
     vllm_cpu: bool = Field(False, validation_alias="MARKLLM_VLLM_CPU")
+
+    # Force temperature to 0 for deterministic OCR correction
+    vllm_temperature_text_chunk_correction: float = Field(
+        0.0, validation_alias="MARKLLM_VLLM_TEMPERATURE_TEXT_CHUNK_CORRECTION"
+    )
+
+    # Force temperature to 0 for deterministic image description generation
+    vllm_temperature_image_description: float = Field(
+        0.0, validation_alias="MARKLLM_VLLM_TEMPERATURE_IMAGE_DESCRIPTION"
+    )
+
+    vllm_chunk_output_formatting_instruction: str = Field(
+        default_factory=lambda : VllmSettings.output_formatting_instruction_template("The corrected Markdown text goes here"),
+        validation_alias="MARKLLM_VLLM_CHUNK_OUTPUT_FORMATTING_INSTRUCTION"
+    )
+
+    vllm_chunk_user_prompt_init: str = Field(
+        "### TEXT TO PROCESS:\n",
+        validation_alias="MARKLLM_VLLM_CHUNK_USER_PROMPT_INIT"
+    )
+
+    vllm_image_description_output_formatting_instruction: str = Field(
+        default_factory=lambda : VllmSettings.output_formatting_instruction_template("The image description text goes here"),
+        validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_OUTPUT_FORMATTING_INSTRUCTION"
+    )
+
+    vllm_output_json_schema: dict[str, Any] = Field(
+        default={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"}
+            },
+            "required": ["text"]
+        },
+        validation_alias="MARKLLM_VLLM_OUTPUT_JSON_SCHEMA"
+    )
 
     def __init__(
         self,
@@ -373,6 +418,24 @@ class VllmSettings(BaseSettings):
                                    f"Available keys: {list(app_config.block_correction_prompts_library.keys())}")
         else:
             logger.info(f"Using provided block correction prompt")
+
+    @staticmethod
+    def output_formatting_instruction_template(json_structure_text: str) -> str:
+        return f"""
+        Output Formatting (JSON-ONLY MODE):
+        Your response must be a valid JSON object and nothing else.
+        Do NOT include any introductory remarks, reasoning (such as <think> tags), explanations, or conversational filler.
+        The output must consist strictly of the JSON object.
+
+        JSON Structure:
+        {{ "text": "{json_structure_text}" }}
+
+        Content Requirements:
+        * The value of the "text" key must contain the corrected text in clean Markdown.
+        * Preserve all paragraph breaks, verse structures, and quotation marks within the JSON string value.
+        * Ensure special characters (like newlines) are properly escaped to maintain valid JSON formatting.
+        * Do NOT include any text before the opening '{{' or after the closing '}}'.
+        """
 
     @field_validator('vllm_gpu_util')
     @classmethod

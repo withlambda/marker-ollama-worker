@@ -22,6 +22,7 @@ API communication for OCR error correction and image description generation.
 
 import asyncio
 import base64
+import json
 import os
 import logging
 import random
@@ -29,6 +30,7 @@ import signal
 import subprocess
 import threading
 import time
+from json_repair import repair_json
 from pathlib import Path
 from typing import Optional, List, Tuple, Callable, Coroutine, Any, TypeVar
 
@@ -45,6 +47,7 @@ from openai.types.chat import (
 from openai.types.chat.chat_completion_content_part_image_param import ImageURL
 
 from settings import VllmSettings
+from utils import ImageTokenCalculator
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -78,6 +81,11 @@ class VllmWorker:
         self.process: Optional[subprocess.Popen] = None
         self._client: Optional[openai.AsyncOpenAI] = None
         self._restart_attempted: bool = False
+
+        self.image_token_calculator = ImageTokenCalculator(
+            model_path=self.settings.vllm_model_path,
+            model_name=self.settings.vllm_model
+        )
 
         logger.info(
             f"VllmWorker initialized with model={self.settings.vllm_model}, "
@@ -272,7 +280,7 @@ class VllmWorker:
     def process_text(
         self,
         text: str,
-        prompt_template: Optional[str],
+        prompt_template: str,
         max_chunk_workers: int,
     ) -> str:
         """
@@ -297,17 +305,21 @@ class VllmWorker:
         Raises:
             ValueError: If the model name is not configured.
         """
-        if not prompt_template:
-            logger.warning(
-                "No block correction prompt configured — skipping OCR error correction. "
-                "Set MARKLLM_VLLM_BLOCK_CORRECTION_PROMPT_KEY to enable."
-            )
-            return text
 
-        if not self.settings.vllm_model:
-            raise ValueError("vllm_model not set for processing")
+        # Add the chunk formatting instruction to the prompt
+        # add the beginning and end of the text to the prompt
+        # to make sure the llm really uses the appropriate formatting
+        # and does not forget about it.
+        prompt_template = f"""
+        {self.settings.vllm_chunk_output_formatting_instruction}
 
-        effective_chunk_size: int = self._compute_effective_chunk_size(prompt_template, r=1.0)
+        {prompt_template}
+
+        {self.settings.vllm_chunk_output_formatting_instruction}
+        """
+
+        # Note r is ~ 1.3 since the JSON output yields ~30 % overhead to the pure text output.
+        effective_chunk_size: int = self._compute_effective_chunk_size(prompt_template, r=1.3)
         if effective_chunk_size <= 0:
             logger.error(
                 "Skipping OCR error correction: prompt token usage leaves no room "
@@ -330,7 +342,7 @@ class VllmWorker:
     def process_file(
         self,
         file_path: Path,
-        prompt_template: Optional[str],
+        prompt_template: str,
         max_chunk_workers: int,
     ) -> bool:
         """
@@ -341,7 +353,7 @@ class VllmWorker:
 
         Args:
             file_path: Path to the file to process.
-            prompt_template: Optional custom system prompt.
+            prompt_template: Custom system prompt.
             max_chunk_workers: Maximum number of concurrent async tasks.
 
         Returns:
@@ -494,7 +506,12 @@ class VllmWorker:
         Returns:
             The corrected text, or the original chunk as fallback on failure.
         """
-        max_completion_tokens = self._compute_chunk_completion_tokens(system_prompt, chunk)
+
+        user_prompt: str = f"{self.settings.vllm_chunk_user_prompt_init}{chunk}"
+
+        max_completion_tokens = self._compute_max_completion_tokens(
+            self._count_tokens(system_prompt, user_prompt)
+        )
         if max_completion_tokens <= 0:
             logger.error(
                 "Skipping chunk %s: prompt token usage exceeds context window "
@@ -510,12 +527,21 @@ class VllmWorker:
                     model=self.settings.vllm_model,
                     messages=[
                         ChatCompletionSystemMessageParam(role="system", content=system_prompt),
-                        ChatCompletionUserMessageParam(role="user", content=chunk),
+                        ChatCompletionUserMessageParam(role="user", content=user_prompt),
                     ],
                     max_tokens=max_completion_tokens,
+                    # 1. Force temperature to 0 for deterministic OCR correction
+                    temperature=self.settings.vllm_temperature_text_chunk_correction,
+                    # 2. This is the vLLM "magic" that prevents chatter
+                    extra_body={
+                        "guided_json": self.settings.vllm_output_json_schema
+                    }
                 )
-                content = response.choices[0].message.content
-                return content.strip() if content else chunk
+
+                content = self.extract_ocr_text(response.choices[0].message.content)
+
+                return content if content else chunk
+
             except Exception as e:
                 is_last = attempt == self.settings.vllm_max_retries
                 if self._is_retryable_error(e) and not is_last:
@@ -532,8 +558,8 @@ class VllmWorker:
                 else:
                     logger.error(
                         f"Fatal error processing chunk {chunk_index} after {attempt + 1} attempts "
-                        f"(${len(chunk)} chunk size, {len(system_prompt)} prompt size, {max_completion_tokens} "
-                        f"max completion_tokens, {len(chunk)+len(system_prompt)+max_completion_tokens} sum,"
+                        f"({len(chunk)} chunk size, {len(system_prompt)} prompt size, {max_completion_tokens} "
+                        f"max completion_tokens, {len(chunk)+len(system_prompt)+max_completion_tokens} sum, "
                         f"{self.settings.vllm_max_model_len} allowed total): {e}"
                     )
                     return chunk  # fallback to the original
@@ -541,27 +567,35 @@ class VllmWorker:
         logger.warning(f"Chunk {chunk_index} processing loop exited unexpectedly. Returning original.")
         return chunk
 
-    def _compute_chunk_completion_tokens(self, system_prompt: str, chunk: str) -> int:
+    def _compute_max_completion_tokens(
+        self,
+        *token_counts: int,
+        upper_token_limit: Optional[int] = None,
+    ) -> int:
         """Compute a safe completion budget so prompt + output fits model context."""
-        prompt_tokens = self._count_tokens(system_prompt) + self._count_tokens(chunk)
         available_tokens = (
             self.settings.vllm_max_model_len
-            - prompt_tokens
+            - sum(token_counts)
             - self.settings.vllm_chat_completion_token_safety_margin
         )
         if available_tokens <= 0:
             return 0
-        return min(self.settings.vllm_max_model_len, available_tokens)
+        return min(
+            upper_token_limit or self.settings.vllm_max_model_len,
+            available_tokens
+        )
 
     def _compute_effective_chunk_size(self, system_prompt: str, r: float) -> int:
-        """Compute a prompt-aware chunk-size budget using an input-to-output token ratio."""
+        """Compute a prompt-aware chunk-size budget using an output-to-input token ratio r."""
         if r < 0:
-            raise ValueError("Input-to-output ratio 'r' must be non-negative.")
+            raise ValueError("Output-to-input token ratio 'r' must be non-negative.")
 
-        prompt_tokens = self._count_tokens(system_prompt)
+        system_prompt_tokens = self._count_tokens(system_prompt)
+        user_prompt_introduction = self._count_tokens(self.settings.vllm_chunk_user_prompt_init)
         context_budget = (
             self.settings.vllm_max_model_len
-            - prompt_tokens
+            - system_prompt_tokens
+            - user_prompt_introduction
             - self.settings.vllm_chat_completion_token_safety_margin
         )
         if context_budget <= 0:
@@ -664,20 +698,63 @@ class VllmWorker:
         if not self.settings.vllm_model:
             raise ValueError("vllm_model not set for image description")
 
-        system_prompt = prompt_template if prompt_template else (
-            "Analyze this book scan fragment. Provide a detailed technical description "
-            "of any diagrams, charts, or illustrations. If it is a photo, describe the "
-            "subject and context. Output only the description text."
-        )
+        system_prompt = prompt_template if prompt_template else \
+            """
+            You are an expert visual analyst. Provide a comprehensive, high-fidelity description of the provided image.
+
+            Your analysis must cover the following categories in depth:
+            1. Overall Scene: The setting, atmosphere, lighting, and artistic style (e.g., photorealistic,
+                digital art, candid).
+            2. Objects & Colors: Specific identification of all key objects, their materials, textures, and
+                precise colors/shades.
+            3. Human Subjects: (If present) Appearance, clothing, posture, perceived emotions, and actions.
+            4. Textual Content: Verbatim transcription of any visible text or symbols.
+            5. Spatial Relationships: The layout of the scene (foreground, midground, background) and how
+                objects/persons are positioned relative to one another.
+            6. Composition & Perspective: Camera angle (e.g., low-angle, birds-eye), depth of field, and framing.
+
+            Structure: Return your analysis ONLY as a valid JSON object with a 'text' key.
+            Constraint: Output the JSON string alone. No introductory text, no markdown code blocks, and no conversational filler.
+            """
 
         if target_language:
-            system_prompt = f"{system_prompt.rstrip()} Respond in {target_language}."
+            system_prompt = f"{system_prompt.rstrip()}\nLanguage: You must answer in {target_language}."
+
+        system_prompt = f"""
+        {self.settings.vllm_image_description_output_formatting_instruction}
+
+        {system_prompt}
+
+        {self.settings.vllm_image_description_output_formatting_instruction}
+        """
+
 
         # Keep request-level user instruction short; avoid repeating template text
         # when it is already provided as the system prompt.
-        user_instruction = "Describe the attached image and output only the description text."
+        user_instruction = "### IMAGE TO DESCRIBE\n"
 
         fallback_msg = "> **Image Description:** [Description unavailable]"
+
+        prompt_tokens = self._count_tokens(system_prompt, user_instruction)
+
+        image_tokens = self.image_token_calculator.calculate_image_tokens(image_source=image_path)
+
+        max_completion_tokens = self._compute_max_completion_tokens(
+            prompt_tokens, image_tokens,
+            upper_token_limit=self.settings.vllm_image_description_max_tokens,
+        )
+
+        if max_completion_tokens < self.settings.vllm_min_completion_tokens:
+            logger.warning(
+                "Skipping image %s description: prompt token usage leaves no room "
+                "for completion (max_model_len=%s, image_tokens=%s, prompt_tokens=%s). "
+                "Returning fallback.",
+                image_path.name,
+                self.settings.vllm_max_model_len,
+                image_tokens,
+                prompt_tokens,
+            )
+            return fallback_msg
 
         try:
             # Read and base64-encode the image
@@ -702,25 +779,6 @@ class VllmWorker:
 
         for attempt in range(self.settings.vllm_max_retries + 1):
             try:
-                prompt_tokens = self._count_tokens(system_prompt) + self._count_tokens(user_instruction)
-                available_completion_tokens = (
-                    self.settings.vllm_max_model_len
-                    - prompt_tokens
-                    - self.settings.vllm_chat_completion_token_safety_margin
-                )
-                max_description_tokens = min(
-                    self.settings.vllm_image_description_max_tokens,
-                    available_completion_tokens,
-                )
-                if max_description_tokens < self.settings.vllm_min_completion_tokens:
-                    logger.error(
-                        "Skipping image %s description: prompt token usage leaves no room "
-                        "for completion (max_model_len=%s).",
-                        image_path.name,
-                        self.settings.vllm_max_model_len,
-                    )
-                    return fallback_msg
-
                 response = await self._client.chat.completions.create(
                     model=self.settings.vllm_model,
                     messages=[
@@ -739,15 +797,20 @@ class VllmWorker:
                             ]
                         ),
                     ],
-                    max_tokens=max_description_tokens,
+                    max_tokens=max_completion_tokens,
+                    temperature=self.settings.vllm_temperature_image_description,
+                    # 2. This is the vLLM "magic" that prevents chatter
+                    extra_body={
+                        "guided_json": self.settings.vllm_output_json_schema
+                    }
                 )
 
-                content = response.choices[0].message.content
-                description = content.strip() if content else ""
-                if not description:
+                content = self.extract_ocr_text(response.choices[0].message.content)
+
+                if not content:
                     logger.warning(f"Empty image description returned for {image_path.name}")
                     return fallback_msg
-                return description
+                return content
 
             except Exception as e:
                 is_last = attempt == self.settings.vllm_max_retries
@@ -979,21 +1042,22 @@ class VllmWorker:
     # ------------------------------------------------------------------
 
 
-    def _count_tokens(self, text: str) -> int:
+    def _count_tokens(self, *texts: str) -> int:
         """
-        Count tokens in a string using tiktoken
+        Count the total number of tokens in the provided text inputs.
+
+        Uses the tiktoken encoding configured in ``vllm_tiktoken_encoding_name``.
 
         Args:
-            text: The string to count tokens for.
+            *texts: One or more strings whose tokens need to be counted.
 
         Returns:
-            Estimated or actual token count.
+            The total number of tokens across all provided texts.
         """
-        # Use a configurable proxy for modern LLMs (larger token counts by default)
-        # to avoid context overflow with models that have less efficient tokenizers or different
-        # vocabularies (like Qwen).
         encoding = tiktoken.get_encoding(self.settings.vllm_tiktoken_encoding_name)
-        return len(encoding.encode(text, disallowed_special=()))
+        return sum(
+            len(encoding.encode(text, disallowed_special=())) for text in texts
+        )
 
     def _chunk_text(self, text: str, chunk_size: int) -> List[str]:
         """
@@ -1041,75 +1105,87 @@ class VllmWorker:
 
         return chunks
 
+    @staticmethod
+    def extract_ocr_text(raw_response: str) -> str:
+        """
+        Extracts OCR text from a raw JSON response.
+
+        This method processes a string input assumed to be a JSON response containing OCR-extracted text.
+        In the event of malformed or truncated JSON input, an attempt is made to repair the JSON before extracting
+        the required text.
+
+        :param raw_response: The raw JSON string containing OCR-extracted data.
+        :return: The extracted OCR text as a string. If extraction is unsuccessful, an empty string is returned.
+        """
+        # 1. Attempt standard parsing
+        try:
+            data = json.loads(raw_response)
+            return data.get("text", "")
+        except (json.JSONDecodeError, TypeError):
+            try:
+                # 2. Attempt "Repairing" the truncated JSON
+                repaired = repair_json(raw_response)
+                data = json.loads(repaired)
+
+                # We ensure data is a dict before calling .get()
+                if isinstance(data, dict):
+                    content = data.get("text", "")
+                    if content:
+                        logger.warning("OCR response was truncated and repaired. Text may be incomplete.")
+                    return content
+            except Exception as e:
+                # This catches cases where repair_json or the second json.loads fails
+                logger.error(f"Critical failure extracting OCR text: {e}. Raw response (first 100 characters): {raw_response[:100]}...")
+
+        return ""
+
 
     @staticmethod
     def _split_into_blocks(text: str) -> List[str]:
         """
-        Split text into logical Markdown blocks.
-
-        Blocks are separated by one or more blank lines.  Fenced code blocks
-        and tables are kept intact as single blocks even if they contain
-        blank lines.
-
-        Args:
-            text: The Markdown text to split.
-
-        Returns:
-            List of block strings.
-        """
-        lines = text.split("\n")
+            Split text into logical Markdown blocks.
+            Fenced code blocks and tables are kept intact as single blocks.
+            """
         blocks: List[str] = []
-        current_block_lines: List[str] = []
-        in_code_fence = False
-        in_table = False
+        current_block: List[str] = []
+        in_code_fence = in_table = False
 
-        for line in lines:
+        def flush():
+            """Helper to join, strip, and save the current block content."""
+            if content := "\n".join(current_block).strip():
+                blocks.append(content)
+            current_block.clear()
+
+        for line in text.splitlines():
             stripped = line.strip()
 
-            # Track fenced code blocks (``` ... ```)
+            # 1. Handle Fenced Code Blocks (Highest Priority)
             if stripped.startswith("```"):
                 in_code_fence = not in_code_fence
-                current_block_lines.append(line)
+                current_block.append(line)
                 continue
 
             if in_code_fence:
-                current_block_lines.append(line)
+                current_block.append(line)
                 continue
 
-            # Track table blocks (consecutive lines starting with |)
+            # 2. Handle Tables and Paragraphs
             is_table_line = stripped.startswith("|") and stripped.endswith("|")
+
             if is_table_line:
-                if not in_table and current_block_lines:
-                    # Flush preceding non-table content
-                    block_text = "\n".join(current_block_lines).strip()
-                    if block_text:
-                        blocks.append(block_text)
-                    current_block_lines = []
+                if not in_table:
+                    flush()  # Entering a table, flush previous content
                 in_table = True
-                current_block_lines.append(line)
-                continue
+                current_block.append(line)
             elif in_table:
-                # End of table — flush it
-                block_text = "\n".join(current_block_lines).strip()
-                if block_text:
-                    blocks.append(block_text)
-                current_block_lines = []
+                flush()      # Just left a table, flush it
                 in_table = False
-
-            # Blank line outside the code / table → block boundary
-            if stripped == "":
-                if current_block_lines:
-                    block_text = "\n".join(current_block_lines).strip()
-                    if block_text:
-                        blocks.append(block_text)
-                    current_block_lines = []
+                if stripped:
+                    current_block.append(line) # Preserve the line that ended the table
+            elif not stripped:
+                flush()      # Standard blank line block separator
             else:
-                current_block_lines.append(line)
+                current_block.append(line)
 
-        # Flush remaining content
-        if current_block_lines:
-            block_text = "\n".join(current_block_lines).strip()
-            if block_text:
-                blocks.append(block_text)
-
+        flush()  # Final flush for the remaining buffer
         return blocks

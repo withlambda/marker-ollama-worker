@@ -200,7 +200,7 @@ The following `marker_`-prefixed keys can be used in the `input` section of the 
 | `marker_page_range`               | Page range to convert (e.g., "0,5-10").                         | `None`     |
 | `marker_processors`               | Comma-separated list of marker processors to run.               | `None`     |
 | `marker_output_format`            | The format of the output (markdown, json, etc.).                | `markdown` |
-| `marker_maxtasksperchild`         | Tasks per worker before recycling (prevents memory leaks).      | `10`       |
+| `marker_maxtasksperchild`         | Tasks per worker before recycling (prevents memory leaks).      | `25`       |
 | `marker_disable_maxtasksperchild` | Disable automatic recycling of tasks for the child process.     | `false`    |
 
 #### vLLM Configuration Overrides
@@ -400,9 +400,9 @@ The worker can be configured using environment variables. For `VllmSettings`, us
 | `MARKLLM_VLLM_MODEL`                       | Model name for API calls (derived from path if unset).                                                                                                                                                                    | (Optional)                                    |
 | `MARKLLM_VLLM_VRAM_GB_MODEL`               | VRAM consumed by the model in GB (Required).                                                                                                                                                                              | **None** (Must be set)                        |
 | `MARKLLM_VLLM_HOST`                        | Host IP where vLLM server runs.                                                                                                                                                                                           | `127.0.0.1`                                   |
-| `MARKLLM_VLLM_PORT`                        | Port for the vLLM server.                                                                                                                                                                                                 | `8000`                                        |
+| `MARKLLM_VLLM_PORT`                        | Port for the vLLM server.                                                                                                                                                                                                 | `8001`                                        |
 | `MARKLLM_VLLM_GPU_UTIL`                    | Maximum GPU memory fraction for vLLM (0.0–1.0).                                                                                                                                                                           | `0.85`                                        |
-| `MARKLLM_VLLM_MAX_MODEL_LEN`               | Maximum context/sequence length (tokens); chunk completion tokens are auto-capped to remaining context and chunk input is reduced by prompt-token usage.                                                                  | `8192`                                        |
+| `MARKLLM_VLLM_MAX_MODEL_LEN`               | Maximum context/sequence length (tokens); chunk completion tokens are auto-capped to remaining context and chunk input is reduced by prompt-token usage.                                                                  | `16384`                                        |
 | `MARKLLM_VLLM_MAX_NUM_SEQS`                | Max concurrent sequences (auto-calculated from VRAM).                                                                                                                                                                     | `16`                                          |
 | `MARKLLM_VLLM_STARTUP_TIMEOUT`             | Seconds to wait for vLLM health check on startup.                                                                                                                                                                         | `120`                                         |
 | `MARKLLM_VLLM_VRAM_RECOVERY_DELAY`         | Seconds to wait after Marker before starting vLLM.                                                                                                                                                                        | `10`                                          |
@@ -428,8 +428,8 @@ The worker can be configured using environment variables. For `VllmSettings`, us
 | `MARKER_PAGE_RANGE`                        | Default page range to convert.                                                                                                                                                                                            | `None`                                        |
 | `MARKER_PROCESSORS`                        | Default processors to run.                                                                                                                                                                                                | `None`                                        |
 | `MARKER_OUTPUT_FORMAT`                     | Default output format (markdown, json, etc.).                                                                                                                                                                             | `markdown`                                    |
-| `MARKER_MAXTASKSPERCHILD`                  | Tasks per worker before recycling (prevents memory leaks).                                                                                                                                                                | `10`                                          |
-| `MARKER_DISBABLE_MAXTASKSPERCHILD`         | Disable automatic recycling of tasks for the child process.                                                                                                                                                               | `false`                                       |
+| `MARKER_MAXTASKSPERCHILD`                  | Tasks per worker before recycling (prevents memory leaks).                                                                                                                                                                | `25`                                          |
+| `MARKER_DISABLE_MAXTASKSPERCHILD`          | Disable automatic recycling of tasks for the child process.                                                                                                                                                               | `false`                                       |
 
 ### Performance Tuning Variables
 
@@ -441,7 +441,7 @@ The worker includes adaptive parallelization to maximize GPU utilization (optimi
 | `VRAM_GB_RESERVE`            | VRAM to reserve for system/other processes (GB).                                             | `4`        | `1-8`             |
 | `MARKLLM_VLLM_CHUNK_SIZE`    | Tokens per chunk for LLM processing. Smaller = more parallelism, larger = better context.    | `4000`     | `2000-8000`       |
 | `MARKER_VRAM_GB_PER_WORKER`  | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.           | `5`        | `3-6`             |
-| `MARKLLM_VLLM_MAX_MODEL_LEN` | Max context/sequence length (tokens). Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`. | `8192`     | `2048-32768`      |
+| `MARKLLM_VLLM_MAX_MODEL_LEN` | Max context/sequence length (tokens). Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`. | `16384`     | `2048-32768`      |
 | `VRAM_GB_PER_TOKEN_FACTOR`   | VRAM (GB) per token. Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`.                  | `0.00013`  | `0.0001-0.0005`   |
 | `MARKLLM_VLLM_VRAM_GB_MODEL` | VRAM (GB) consumed by the model. Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`.      | (Required) | `2-16`            |
 | `MARKLLM_VLLM_MAX_RETRIES`   | Maximum retries for LLM chunk processing on transient/recoverable errors.                    | `3`        | `1-10`            |
@@ -497,7 +497,7 @@ For specific hardware or workloads, you can override auto-tuning:
 ```bash
 # Example: 48GB VRAM GPU, medium LLM models - maximize parallelism
 VRAM_GB_TOTAL=48
-MARKLLM_VLLM_MAX_MODEL_LEN=8192
+MARKLLM_VLLM_MAX_MODEL_LEN=16384
 
 # Example: 16GB VRAM GPU, small LLM models - conservative settings
 VRAM_GB_TOTAL=16
@@ -522,9 +522,9 @@ The following environment variables are recommended for a cloud deployment with 
 | `MARKLLM_VLLM_MODEL`               | vLLM              | Model name for API calls (auto-derived from path if unset).                                     | (this or `MARKLLM_VLLM_MODEL_PATH` is required)                         |
 | `MARKLLM_VLLM_VRAM_GB_MODEL`       | vLLM              | VRAM consumed by the model in GB (7B model ~6-8GB).                                             | model dependent                                                         |
 | `MARKLLM_VLLM_HOST`                | vLLM              | Host IP where vLLM server runs.                                                                 | `127.0.0.1`                                                             |
-| `MARKLLM_VLLM_PORT`                | vLLM              | Port for the vLLM server.                                                                       | `8000`                                                                  |
+| `MARKLLM_VLLM_PORT`                | vLLM              | Port for the vLLM server.                                                                       | `8001`                                                                  |
 | `MARKLLM_VLLM_GPU_UTIL`            | vLLM              | Maximum GPU memory fraction for vLLM (0.0–1.0).                                                 | `0.85`                                                                  |
-| `MARKLLM_VLLM_MAX_MODEL_LEN`       | vLLM              | Maximum context/sequence length (tokens).                                                       | `8192`                                                                  |
+| `MARKLLM_VLLM_MAX_MODEL_LEN`       | vLLM              | Maximum context/sequence length (tokens).                                                       | `16384`                                                                  |
 | `MARKLLM_VLLM_MAX_NUM_SEQS`        | vLLM              | Max concurrent sequences (auto-calculated if unset).                                            | `16`                                                                    |
 | `MARKLLM_VLLM_STARTUP_TIMEOUT`     | vLLM              | Seconds to wait for vLLM health check on startup.                                               | `120`                                                                   |
 | `MARKLLM_VLLM_VRAM_RECOVERY_DELAY` | vLLM              | Seconds to wait after Marker before starting vLLM.                                              | `10`                                                                    |
@@ -547,7 +547,7 @@ The following environment variables are recommended for a cloud deployment with 
 | `MARKER_DISABLE_MULTIPROCESSING`   | Marker            | Disable internal Marker multiprocessing.                                                        | `true` (since multiprocessing is handled here directly)                 | 
 | `MARKER_DISABLE_IMAGE_EXTRACTION`  | Marker            | Disable extraction of images from documents.                                                    | `false`                                                                 |
 | `MARKER_OUTPUT_FORMAT`             | Marker            | Default output format (markdown, json, etc.).                                                   | `markdown`                                                              |
-| `MARKER_MAXTASKSPERCHILD`          | Marker            | Tasks per worker before recycling (prevents memory leaks).                                      | `10`                                                                    |
+| `MARKER_MAXTASKSPERCHILD`          | Marker            | Tasks per worker before recycling (prevents memory leaks).                                      | `25`                                                                    |
 | `MARKER_VRAM_GB_PER_WORKER`        | Marker            | Estimated VRAM per Marker worker (GB) for auto-scaling.                                         | `5`                                                                     |
 | (x) `PYTORCH_CUDA_ALLOC_CONF`      | PyTorch           | CUDA memory allocator configuration (e.g., `expandable_segments:True` to reduce fragmentation). | `expandable_segments:True`                                              |
 | `PYTORCH_ENABLE_MPS_FALLBACK`      | PyTorch           | Fallback to CPU if MPS operations aren't supported.                                             | `1`                                                                     |
@@ -596,9 +596,9 @@ The following variables can also be set to further customize the environment, th
 |:------------------------|:----------------------------------------|:------------------------------------------------------------|:--------------|
 | **Python**              | `PYTHONUNBUFFERED`                      | Force unbuffered stdout/stderr.                             | `1`           |
 | **Hugging Face**        | `HF_HUB_OFFLINE`                        | Run Hugging Face Hub in offline mode.                       | `1`           |
-| **Transformer Library** | `TRANSFORMERS_OFFILNE`                  | Prevents the Transformers Library to download model weights | `1`           | 
+| **Transformer Library** | `TRANSFORMERS_OFFLINE`                  | Prevents the Transformers library from downloading model weights. | `1`           |
 | **vLLM**                | `MARKLLM_VLLM_HOST`                     | Host IP where vLLM server runs.                             | `127.0.0.1`   |
-| **vLLM**                | `MARKLLM_VLLM_PORT`                     | Port for the vLLM server.                                   | `8000`        |
+| **vLLM**                | `MARKLLM_VLLM_PORT`                     | Port for the vLLM server.                                   | `8001`        |
 | **vLLM**                | `MARKLLM_VLLM_IMAGE_DESCRIPTION_PROMPT` | Prompt template for extracted image descriptions.           | (Optional)    |
 | **PyTorch**             | `PYTORCH_ENABLE_MPS_FALLBACK`           | Fallback to CPU if MPS ops aren't supported.                | `1`           |
 | **PyTorch**             | `TORCH_NUM_THREADS`                     | Threads for intraop parallelism on CPU.                     | `1`           |

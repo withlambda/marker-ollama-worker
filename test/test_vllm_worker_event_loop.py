@@ -1,7 +1,7 @@
 """
 Regression tests for VllmWorker sync APIs when an asyncio loop is already running.
 """
-
+import os
 import sys
 import types
 import unittest
@@ -14,19 +14,28 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from vllm_worker import VllmWorker
+from settings import VllmSettings, GlobalConfig
 
 
 def _make_worker() -> VllmWorker:
     """Create a lightweight worker with only the settings needed by these tests."""
-    settings = types.SimpleNamespace(
-        vllm_model="stub-model",
-        vllm_host="127.0.0.1",
-        vllm_port=8001,
-        vllm_chunk_size=1024,
-        vllm_max_model_len=8192,
-        vllm_chat_completion_token_safety_margin=64,
-        vllm_tiktoken_encoding_name="gpt2",
-    )
+    #settings = types.SimpleNamespace(
+    #    vllm_model="stub-model",
+    #    vllm_host="127.0.0.1",
+    #    vllm_port=8001,
+    #    vllm_chunk_size=1024,
+    #    vllm_max_model_len=16384,
+    #    vllm_chat_completion_token_safety_margin=64,
+    #    vllm_tiktoken_encoding_name="gpt2",
+    #)
+
+    os.environ["VOLUME_ROOT_MOUNT_PATH"]="/tmp"
+    os.environ["VRAM_GB_TOTAL"]="24"
+    os.environ["MARKLLM_VLLM_VRAM_GB_MODEL"]="4"
+    os.environ["MARKLLM_VLLM_MODEL"]="model"
+    settings = VllmSettings(app_config=GlobalConfig(
+    ))
+
     return VllmWorker(settings=settings)
 
 

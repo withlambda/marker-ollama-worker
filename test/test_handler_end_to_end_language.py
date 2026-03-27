@@ -2,12 +2,22 @@ import unittest
 from unittest.mock import MagicMock, patch, ANY
 from pathlib import Path
 import sys
+import types
+from importlib.machinery import ModuleSpec
+
+
+def _make_module(name: str):
+    module = types.ModuleType(name)
+    module.__spec__ = ModuleSpec(name, loader=None)
+    if name == "torch.multiprocessing":
+        module.set_start_method = lambda *_args, **_kwargs: None
+    return module
 
 # Mock dependencies
 MOCK_MODULES = {
     "runpod": MagicMock(),
-    "torch": MagicMock(),
-    "torch.multiprocessing": MagicMock(),
+    "torch": _make_module("torch"),
+    "torch.multiprocessing": _make_module("torch.multiprocessing"),
     "marker": MagicMock(),
     "marker.converters": MagicMock(),
     "marker.converters.pdf": MagicMock(),

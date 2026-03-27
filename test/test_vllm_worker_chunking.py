@@ -1,7 +1,7 @@
 """Tests for markdown chunking behavior in ``VllmWorker``."""
 
+import os
 import sys
-import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -11,11 +11,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from vllm_worker import VllmWorker
+from settings import VllmSettings, GlobalConfig
 
 
 def _make_worker(chunk_size: int = 100) -> VllmWorker:
-    """Create a lightweight worker configured for chunking tests."""
-    settings = types.SimpleNamespace(
+    """Create a worker configured for chunking tests with real settings models."""
+    os.environ["VOLUME_ROOT_MOUNT_PATH"] = "/tmp"
+    os.environ["VRAM_GB_TOTAL"] = "24"
+    settings = VllmSettings(
+        app_config=GlobalConfig(),
+        vllm_vram_gb_model=4,
         vllm_model="stub-model",
         vllm_host="127.0.0.1",
         vllm_port=8001,
