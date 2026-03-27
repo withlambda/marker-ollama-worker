@@ -227,6 +227,7 @@ class VllmSettings(BaseSettings):
         vllm_temperature_image_description (float): Temperature for image description generation.
         vllm_chunk_output_formatting_instruction (str): Formatting instruction for chunked output.
         vllm_chunk_user_prompt_init (str): Initial prompt for chunked processing.
+        vllm_chunk_structural_markdown_instructions (str): Structural Markdown instructions for chunked processing.
         vllm_image_description_output_formatting_instruction (str): Formatting instruction for image description output.
         vllm_output_json_schema (dict): JSON schema for the output format.
     """
@@ -282,7 +283,7 @@ class VllmSettings(BaseSettings):
         validation_alias="MARKLLM_VLLM_RETRY_DELAY"
     )
     vllm_chunk_size: int = Field(
-        4000,
+        default_factory=lambda data: data["vllm_max_model_len"] // 2,
         validation_alias="MARKLLM_VLLM_CHUNK_SIZE"
     )
     vllm_chunk_workers: int = Field(
@@ -353,6 +354,19 @@ class VllmSettings(BaseSettings):
         default_factory=lambda : VllmSettings.output_formatting_instruction_template("The image description text goes here"),
         validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_OUTPUT_FORMATTING_INSTRUCTION"
     )
+
+    vllm_chunk_structural_markdown_instructions: str = Field(
+        """
+        Structural & Markdown Rules:
+            - Table Restoration: Reconstruct fragments of Markdown tables (pipes | and dashes --). Merge rows that were split across lines and ensure logical alignment.
+            - Metadata Preservation:
+                - Do NOT alter page markers like {0}-----------------
+                - Keep image syntax like ![](_page_1_Picture_5.jpeg) exactly as is.
+            - Hyphenation: Merge words split by line-break hyphens unless the hyphen is part of the archaic compound style.
+        """,
+        validation_alias="MARKLLM_VLLM_CHUNK_STRUCTURAL_MARKDOWN_INSTRUCTIONS"
+    )
+
 
     vllm_output_json_schema: dict[str, Any] = Field(
         default={

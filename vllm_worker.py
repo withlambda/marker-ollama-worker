@@ -314,6 +314,7 @@ class VllmWorker:
         {self.settings.vllm_chunk_output_formatting_instruction}
 
         {prompt_template}
+        {self.settings.vllm_chunk_structural_markdown_instructions}
 
         {self.settings.vllm_chunk_output_formatting_instruction}
         """
