@@ -400,10 +400,6 @@ class ImageTokenCalculator:
     :type config: Optional[transformers.AutoConfig]
     :ivar tokenizer: Loaded tokenizer for the model, if available.
     :type tokenizer: Optional[transformers.AutoTokenizer]
-    :ivar patch_size: Patch size retrieved from the model configuration, defaulted if unavailable.
-    :type patch_size: int
-    :ivar merge_size: Spatial merge size retrieved from the model configuration, defaulted if unavailable.
-    :type merge_size: int
     :ivar effective_patch: Effective patch area calculated as patch_size * merge_size.
     :type effective_patch: int
     """
@@ -434,9 +430,8 @@ class ImageTokenCalculator:
             self.config = None
             self.tokenizer = None
 
-        # 2. Extract specs with safe fallbacks
-        self.patch_size, self.merge_size = self._get_effective_patch()
-        self.effective_patch = self.patch_size * self.merge_size
+        # 2. Get effective patch size
+        self.effective_patch = self._get_effective_patch()
 
     @staticmethod
     def _resolve_model_path(model_name: str) -> str:
