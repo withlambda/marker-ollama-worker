@@ -19,12 +19,17 @@ Includes environment configuration, resource management (VRAM),
 and path validation utilities.
 """
 
+import math
 import logging
 import os
+from PIL import Image
+from transformers import AutoConfig, AutoTokenizer
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Tuple, Union, Optional
+
+from huggingface_hub import try_to_load_from_cache, _CACHED_NO_EXIST
 
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
@@ -380,3 +385,128 @@ class TextProcessor:
             return False
 
         raise ValueError(f"Value '{value}' is not parsable as a boolean.")
+
+class ImageTokenCalculator:
+    """
+    Handles image token calculations based on configurable model settings.
+
+    This class provides functionality for loading pre-trained model configurations and tokenizers,
+    resolving model paths, and calculating the number of image tokens based on vision parameters such
+    as patch size and spatial merge size. Defaults are applied conservatively in the absence of
+    specific configuration values.
+
+    :type model_path: Optional[str]
+    :ivar config: Loaded model configuration used to extract vision parameters.
+    :type config: Optional[transformers.AutoConfig]
+    :ivar tokenizer: Loaded tokenizer for the model, if available.
+    :type tokenizer: Optional[transformers.AutoTokenizer]
+    :ivar patch_size: Patch size retrieved from the model configuration, defaulted if unavailable.
+    :type patch_size: int
+    :ivar merge_size: Spatial merge size retrieved from the model configuration, defaulted if unavailable.
+    :type merge_size: int
+    :ivar effective_patch: Effective patch area calculated as patch_size * merge_size.
+    :type effective_patch: int
+    """
+    def __init__(self, model_path: Optional[str] = None, model_name: Optional[str] = None):
+        """
+        :param model_path: Path to the local HF cache/directory.
+        """
+        if model_path is None and model_name is None:
+            raise ValueError("Either model_path or model_name must be provided.")
+
+        model_path_specified: str = model_path or self._resolve_model_path(model_name)
+
+        # 1. Offline Loading Logic
+        # local_files_only=True prevents any network attempts even if HF_HUB_OFFLINE is missed.
+        try:
+            self.config = AutoConfig.from_pretrained(
+                model_path_specified,
+                trust_remote_code=True,
+                local_files_only=True
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path_specified,
+                trust_remote_code=True,
+                local_files_only=True
+            )
+        except Exception as e:
+            print(f"Warning: Could not load config/tokenizer from {model_path}. Error: {e}")
+            self.config = None
+            self.tokenizer = None
+
+        # 2. Extract specs with safe fallbacks
+        self.patch_size, self.merge_size = self._get_effective_patch()
+        self.effective_patch = self.patch_size * self.merge_size
+
+    @staticmethod
+    def _resolve_model_path(model_name: str) -> str:
+        """
+        Resolves a model name to its local snapshot path using HF_HOME.
+        Returns the path if found, otherwise returns the original model_name.
+        """
+        # This checks the cache for the model and returns the path to the config file
+        filepath = try_to_load_from_cache(repo_id=model_name, filename="config.json")
+
+        if filepath is not None and filepath is not _CACHED_NO_EXIST:
+            # filepath is usually: .../snapshots/<hash>/config.json
+            # We want the directory: .../snapshots/<hash>/
+            return os.path.dirname(os.path.abspath(filepath))
+        else:
+            logger.debug(f"Model path for model {model_name} not found in cache. Try to work with the model name only")
+
+        # If not found in the cache, return the name and hope AutoConfig finds it
+        # via environment variables (HF_HOME/HF_HUB_OFFLINE)
+        return model_name
+
+
+    def _get_effective_patch(self) -> int:
+        """
+        Extracts vision parameters. If missing, defaults to Qwen2-VL specs
+        to ensure a conservative (higher) token count.
+        """
+        # Default fallbacks (Conservative: smaller patch = more tokens)
+        default_patch = 14
+        default_merge = 1
+
+        if not self.config:
+            return default_patch * default_merge
+
+        # Handle different config structures (vision_config vs top-level)
+
+        try:
+            vision_cfg = getattr(self.config, "vision_config")
+        except AttributeError:
+            logger.warning(f"No vision_config found in {self.config}. "
+                           f"Using directly top-level config to extract patch_size and spatial_merge_size.")
+            vision_cfg = self.config
+
+        try:
+            patch = getattr(vision_cfg, "patch_size")
+        except AttributeError:
+            logger.warning(f"No patch_size found in {self.config}. Using default: {default_patch}.")
+            patch = default_patch
+
+        try:
+            merge = getattr(vision_cfg, "spatial_merge_size")
+        except AttributeError:
+            logger.warning(f"No spatial_merge_size found in {self.config}. Using default: {default_merge}.")
+            merge = default_merge
+
+        return patch * merge
+
+    def calculate_image_tokens(self, image_source: Union[str, Path, Image.Image]) -> int:
+        """Calculates image tokens based on spatial grid patches."""
+        if isinstance(image_source, (str, Path)):
+            with Image.open(image_source) as img:
+                w, h = img.size
+        else:
+            w, h = image_source.size
+
+        # Grid calculation: rounding up ensures we don't underestimate
+        grid_w = math.ceil(w / self.effective_patch)
+        grid_h = math.ceil(h / self.effective_patch)
+
+        # Formula includes spatial tokens + newline tokens + overhead
+        # Max tokens = (W_patches * H_patches) + H_patches + 4
+        image_tokens = (grid_w * grid_h) + grid_h + 4
+        return image_tokens

@@ -402,7 +402,7 @@ The worker can be configured using environment variables. For `VllmSettings`, us
 | `MARKLLM_VLLM_HOST`                        | Host IP where vLLM server runs.                                                                                                                                                                                           | `127.0.0.1`                                   |
 | `MARKLLM_VLLM_PORT`                        | Port for the vLLM server.                                                                                                                                                                                                 | `8000`                                        |
 | `MARKLLM_VLLM_GPU_UTIL`                    | Maximum GPU memory fraction for vLLM (0.0–1.0).                                                                                                                                                                           | `0.85`                                        |
-| `MARKLLM_VLLM_MAX_MODEL_LEN`               | Maximum context/sequence length (tokens); chunk completion tokens are auto-capped to remaining context and chunk input is reduced by prompt-token usage.                                                                  | `8192`                                        |
+| `MARKLLM_VLLM_MAX_MODEL_LEN`               | Maximum context/sequence length (tokens); chunk completion tokens are auto-capped to remaining context and chunk input is reduced by prompt-token usage.                                                                  | `16384`                                        |
 | `MARKLLM_VLLM_MAX_NUM_SEQS`                | Max concurrent sequences (auto-calculated from VRAM).                                                                                                                                                                     | `16`                                          |
 | `MARKLLM_VLLM_STARTUP_TIMEOUT`             | Seconds to wait for vLLM health check on startup.                                                                                                                                                                         | `120`                                         |
 | `MARKLLM_VLLM_VRAM_RECOVERY_DELAY`         | Seconds to wait after Marker before starting vLLM.                                                                                                                                                                        | `10`                                          |
@@ -441,7 +441,7 @@ The worker includes adaptive parallelization to maximize GPU utilization (optimi
 | `VRAM_GB_RESERVE`            | VRAM to reserve for system/other processes (GB).                                             | `4`        | `1-8`             |
 | `MARKLLM_VLLM_CHUNK_SIZE`    | Tokens per chunk for LLM processing. Smaller = more parallelism, larger = better context.    | `4000`     | `2000-8000`       |
 | `MARKER_VRAM_GB_PER_WORKER`  | Estimated VRAM per Marker worker (GB). Used for auto-calculating `marker_workers`.           | `5`        | `3-6`             |
-| `MARKLLM_VLLM_MAX_MODEL_LEN` | Max context/sequence length (tokens). Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`. | `8192`     | `2048-32768`      |
+| `MARKLLM_VLLM_MAX_MODEL_LEN` | Max context/sequence length (tokens). Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`. | `16384`     | `2048-32768`      |
 | `VRAM_GB_PER_TOKEN_FACTOR`   | VRAM (GB) per token. Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`.                  | `0.00013`  | `0.0001-0.0005`   |
 | `MARKLLM_VLLM_VRAM_GB_MODEL` | VRAM (GB) consumed by the model. Used for auto-calculating `MARKLLM_VLLM_MAX_NUM_SEQS`.      | (Required) | `2-16`            |
 | `MARKLLM_VLLM_MAX_RETRIES`   | Maximum retries for LLM chunk processing on transient/recoverable errors.                    | `3`        | `1-10`            |
@@ -497,7 +497,7 @@ For specific hardware or workloads, you can override auto-tuning:
 ```bash
 # Example: 48GB VRAM GPU, medium LLM models - maximize parallelism
 VRAM_GB_TOTAL=48
-MARKLLM_VLLM_MAX_MODEL_LEN=8192
+MARKLLM_VLLM_MAX_MODEL_LEN=16384
 
 # Example: 16GB VRAM GPU, small LLM models - conservative settings
 VRAM_GB_TOTAL=16
@@ -524,7 +524,7 @@ The following environment variables are recommended for a cloud deployment with 
 | `MARKLLM_VLLM_HOST`                | vLLM              | Host IP where vLLM server runs.                                                                 | `127.0.0.1`                                                             |
 | `MARKLLM_VLLM_PORT`                | vLLM              | Port for the vLLM server.                                                                       | `8000`                                                                  |
 | `MARKLLM_VLLM_GPU_UTIL`            | vLLM              | Maximum GPU memory fraction for vLLM (0.0–1.0).                                                 | `0.85`                                                                  |
-| `MARKLLM_VLLM_MAX_MODEL_LEN`       | vLLM              | Maximum context/sequence length (tokens).                                                       | `8192`                                                                  |
+| `MARKLLM_VLLM_MAX_MODEL_LEN`       | vLLM              | Maximum context/sequence length (tokens).                                                       | `16384`                                                                  |
 | `MARKLLM_VLLM_MAX_NUM_SEQS`        | vLLM              | Max concurrent sequences (auto-calculated if unset).                                            | `16`                                                                    |
 | `MARKLLM_VLLM_STARTUP_TIMEOUT`     | vLLM              | Seconds to wait for vLLM health check on startup.                                               | `120`                                                                   |
 | `MARKLLM_VLLM_VRAM_RECOVERY_DELAY` | vLLM              | Seconds to wait after Marker before starting vLLM.                                              | `10`                                                                    |

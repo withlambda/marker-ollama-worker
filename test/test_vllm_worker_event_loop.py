@@ -23,7 +23,7 @@ def _make_worker() -> VllmWorker:
         vllm_host="127.0.0.1",
         vllm_port=8001,
         vllm_chunk_size=1024,
-        vllm_max_model_len=8192,
+        vllm_max_model_len=16384,
         vllm_chat_completion_token_safety_margin=64,
         vllm_tiktoken_encoding_name="gpt2",
     )
