@@ -43,6 +43,16 @@ When generating or modifying code, the agent must ensure:
    - Keep `README.md` current for significant behavioral or configuration changes.
    - Ensure `README.md` includes project purpose, installation, usage/testing, and deployment-relevant details where applicable.
    - Before editing `README.md`, re-read its latest content to preserve manual user additions/removals.
+5. **Functional Style**:
+   - Follow an immutable functional style when possible, ensuring it does not increase code complexity.
+6. **Error Handling**:
+   - Avoid useless `except: pass` blocks.
+   - Catch specific exceptions instead of a general `Exception` whenever they can be inferred.
+   - All caught exceptions MUST be logged with the appropriate context.
+7. **Import Management**:
+   - Regularly check and remove unused imports.
+8. **Formatting**:
+   - Code formatting MUST strictly obey the rules defined in `.editorconfig`.
 
 ### 3) Dependencies in Source Code and Tests
 
