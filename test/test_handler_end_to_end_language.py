@@ -2,31 +2,12 @@ import unittest
 from unittest.mock import MagicMock, patch, ANY
 from pathlib import Path
 import sys
-import types
-from importlib.machinery import ModuleSpec
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-def _make_module(name: str):
-    module = types.ModuleType(name)
-    module.__spec__ = ModuleSpec(name, loader=None)
-    if name == "torch.multiprocessing":
-        module.set_start_method = lambda *_args, **_kwargs: None
-    return module
-
-# Mock dependencies
-MOCK_MODULES = {
-    "runpod": MagicMock(),
-    "torch": _make_module("torch"),
-    "torch.multiprocessing": _make_module("torch.multiprocessing"),
-    "mineru": MagicMock(),
-    "mineru.data": MagicMock(),
-    "mineru.data.data_reader_writer": MagicMock(),
-    "mineru.data.dataset": MagicMock(),
-    "mineru.model": MagicMock(),
-    "mineru.model.doc_analyze_by_custom_model": MagicMock(),
-}
-sys.modules.update(MOCK_MODULES)
-__import__("handler")
+import handler
 
 class TestHandlerEndToEndLanguage(unittest.TestCase):
     def setUp(self):

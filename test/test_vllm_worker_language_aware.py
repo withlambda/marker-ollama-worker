@@ -2,36 +2,14 @@ import unittest
 from unittest.mock import MagicMock, patch, AsyncMock
 from pathlib import Path
 import sys
-import types
-from importlib.machinery import ModuleSpec
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def _make_module(name: str):
-    module = types.ModuleType(name)
-    module.__spec__ = ModuleSpec(name, loader=None)
-    if name == "torch.multiprocessing":
-        module.set_start_method = lambda *_args, **_kwargs: None
-    return module
-
-# Mock dependencies that might be missing or cause issues in this environment
-with patch.dict(sys.modules, {
-    "runpod": _make_module("runpod"),
-    "torch": _make_module("torch"),
-    "torch.multiprocessing": _make_module("torch.multiprocessing"),
-    "mineru": _make_module("mineru"),
-    "mineru.data": _make_module("mineru.data"),
-    "mineru.data.data_reader_writer": _make_module("mineru.data.data_reader_writer"),
-    "mineru.data.dataset": _make_module("mineru.data.dataset"),
-    "mineru.model": _make_module("mineru.model"),
-    "mineru.model.doc_analyze_by_custom_model": _make_module("mineru.model.doc_analyze_by_custom_model"),
-    "paddle": _make_module("paddle"),
-}):
-    from vllm_worker import VllmWorker
-    from settings import VllmSettings, GlobalConfig
+from vllm_worker import VllmWorker
+from settings import VllmSettings, GlobalConfig
 
 class TestVllmWorkerLanguageAware(unittest.TestCase):
     def setUp(self):

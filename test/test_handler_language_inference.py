@@ -1,31 +1,5 @@
 import unittest
-import sys
-import types
-from importlib.machinery import ModuleSpec
-from unittest.mock import MagicMock, patch
-
-
-def _make_module(name: str):
-    module = types.ModuleType(name)
-    module.__spec__ = ModuleSpec(name, loader=None)
-    if name == "torch.multiprocessing":
-        module.set_start_method = lambda *_args, **_kwargs: None
-    return module
-
-# Mock dependencies that are not available in this environment
-with patch.dict(sys.modules, {
-    "runpod": MagicMock(),
-    "torch": _make_module("torch"),
-    "torch.multiprocessing": _make_module("torch.multiprocessing"),
-    "mineru": MagicMock(),
-    "mineru.data": MagicMock(),
-    "mineru.data.data_reader_writer": MagicMock(),
-    "mineru.data.dataset": MagicMock(),
-    "mineru.model": MagicMock(),
-    "mineru.model.doc_analyze_by_custom_model": MagicMock(),
-}):
-    from utils import LanguageProcessor
-
+from utils import LanguageProcessor
 from langdetect import DetectorFactory
 
 class TestLanguageInference(unittest.TestCase):
