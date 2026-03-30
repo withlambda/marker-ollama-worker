@@ -29,7 +29,7 @@
 # 6. Pushes the changes and the tag to the remote repository.
 #
 # Usage: ./release.sh [-d|--dry-run] <version>
-# Example: ./release.sh 1.10.3
+# Example: ./release.sh 3.0.1
 
 # Ensure the script stops on errors
 set -e
@@ -65,7 +65,7 @@ NEW_VERSION=${VERSION_INPUT#v}
 
 # Validate version format (simple SemVer: X.Y.Z)
 if [[ ! $NEW_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: Version must be in the format X.Y.Z (e.g., 1.10.3). Provided: $VERSION_INPUT"
+    echo "Error: Version must be in the format X.Y.Z (e.g., 3.0.1). Provided: $VERSION_INPUT"
     exit 1
 fi
 
@@ -108,14 +108,14 @@ else
 fi
 
 # Update requirements.txt
-# Assuming marker-pdf is the library we want to sync with
+# Assuming mineru[full] is the library we want to sync with
 if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] Update requirements.txt to marker-pdf==$NEW_VERSION"
+    echo "[DRY RUN] Update requirements.txt to mineru[full]==$NEW_VERSION"
 else
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/marker-pdf==.*/marker-pdf==$NEW_VERSION/" requirements.txt
+        sed -i '' "s/mineru\[full\]==.*/mineru\[full\]==$NEW_VERSION/" requirements.txt
     else
-        sed -i "s/marker-pdf==.*/marker-pdf==$NEW_VERSION/" requirements.txt
+        sed -i "s/mineru\[full\]==.*/mineru\[full\]==$NEW_VERSION/" requirements.txt
     fi
 fi
 

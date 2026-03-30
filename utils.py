@@ -14,7 +14,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Utility functions and classes for the marker-vllm-worker.
+Utility functions and classes for the mineru-vllm-worker.
 Includes environment configuration, resource management (VRAM),
 and path validation utilities.
 """

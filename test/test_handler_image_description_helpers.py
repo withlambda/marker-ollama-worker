@@ -1,6 +1,6 @@
 """
 Unit tests for helper functions that merge vLLM-generated image descriptions
-into marker text outputs.
+into MinerU text outputs.
 """
 
 import importlib
@@ -213,7 +213,7 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
         """Should append descriptions to the end if the image tags are not found in the text."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_file = Path(temp_dir) / "doc.md"
-            output_file.write_text("Original marker text without tags.", encoding="utf-8")
+            output_file.write_text("Original MinerU text without tags.", encoding="utf-8")
 
             inserted = handler_module.insert_image_descriptions_to_text_file(
                 app_config=self.app_config,
@@ -226,7 +226,7 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             updated_text = output_file.read_text(encoding="utf-8")
 
             self.assertTrue(inserted)
-            self.assertIn("Original marker text without tags.", updated_text)
+            self.assertIn("Original MinerU text without tags.", updated_text)
             self.assertIn("## Extracted Image Descriptions", updated_text)
             self.assertIn("### Image: `missing.png`", updated_text)
             # Updated to match blockquote format

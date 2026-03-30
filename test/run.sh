@@ -26,7 +26,7 @@
 # Prerequisites:
 # - Docker installed and running.
 # - Python 3 installed.
-# - Access to vLLM-compatible models and Marker models (mounted via volumes).
+# - Access to vLLM-compatible models and MinerU models (mounted via volumes).
 
 set -e
 
@@ -112,7 +112,6 @@ docker_run_cmd+=("--name ${DOCKER_CONTAINER}")
 docker_run_cmd+=("--shm-size=4gb")
 docker_run_cmd+=("--env-file custom.env")
 docker_run_cmd+=("--env-file mineru.env")
-#docker_run_cmd+=("--env-file surya.env")
 docker_run_cmd+=("--env-file tools.env")
 docker_run_cmd+=("-e STRICT_MODE=True")
 #docker_run_cmd+=("-v /path/to/model/weights:/v/models")
@@ -127,7 +126,7 @@ echo "Docker run command:"
 echo "${docker_run_cmd[*]}"
 
 # Debug: Inspect the directory structure of the mounted cache BEFORE running the handler
-# This helps confirm if the paths expected by Marker match what is mounted.
+# This helps confirm if the paths expected by MinerU match what is mounted.
 #"${docker_run_cmd[@]:0:${#docker_run_cmd[@]}-1}" "${DOCKER_CONTAINER}" ls -R /app/cache/datalab | head -n 30
 
 # shellcheck disable=SC2068

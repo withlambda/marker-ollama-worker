@@ -161,7 +161,7 @@ class VllmWorker:
 
         # Forces fresh CUDA initialization in the child
         env["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-        # Critical if Marker used the GPU earlier
+        # Critical if MinerU used the GPU earlier
         env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
         if self.settings.vllm_cpu:

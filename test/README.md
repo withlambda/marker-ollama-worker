@@ -1,8 +1,8 @@
 # Local Testing Environment
 
-This directory contains scripts and configuration files to test the Marker-vLLM RunPod worker locally.
+This directory contains scripts and configuration files to test the MinerU-vLLM RunPod worker locally.
 
-**Note:** While Marker can run on a CPU, the vLLM server (used for LLM post-processing) **requires an NVIDIA GPU**. To test the full pipeline locally, you must have the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed and a compatible GPU available. If no GPU is available, the vLLM phase will be skipped or fail.
+**Note:** While MinerU can run on a CPU, the vLLM server (used for LLM post-processing) **requires an NVIDIA GPU**. To test the full pipeline locally, you must have the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) installed and a compatible GPU available. If no GPU is available, the vLLM phase will be skipped or fail.
 
 ## Prerequisites
 

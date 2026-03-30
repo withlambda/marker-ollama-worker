@@ -22,13 +22,13 @@ with patch.dict(sys.modules, {
     "runpod": _make_module("runpod"),
     "torch": _make_module("torch"),
     "torch.multiprocessing": _make_module("torch.multiprocessing"),
-    "marker": _make_module("marker"),
-    "marker.converters": _make_module("marker.converters"),
-    "marker.converters.pdf": _make_module("marker.converters.pdf"),
-    "marker.models": _make_module("marker.models"),
-    "marker.config": _make_module("marker.config"),
-    "marker.config.parser": _make_module("marker.config.parser"),
-    "marker.output": _make_module("marker.output"),
+    "mineru": _make_module("mineru"),
+    "mineru.data": _make_module("mineru.data"),
+    "mineru.data.data_reader_writer": _make_module("mineru.data.data_reader_writer"),
+    "mineru.data.dataset": _make_module("mineru.data.dataset"),
+    "mineru.model": _make_module("mineru.model"),
+    "mineru.model.doc_analyze_by_custom_model": _make_module("mineru.model.doc_analyze_by_custom_model"),
+    "paddle": _make_module("paddle"),
 }):
     from vllm_worker import VllmWorker
     from settings import VllmSettings, GlobalConfig

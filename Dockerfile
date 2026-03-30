@@ -49,7 +49,7 @@ ARG BASE_IMAGE
 # MKL_DYNAMIC=FALSE
 # OMP_DYNAMIC=FALSE
 #
-# --- Fix for Sequential GPU Workflows (Marker -> vLLM) ---
+# --- Fix for Sequential GPU Workflows (MinerU -> vLLM) ---
 #
 # PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 #
