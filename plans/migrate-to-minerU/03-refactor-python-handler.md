@@ -26,9 +26,9 @@ To avoid repeated multi-GB downloads, perform this verification inside the `mark
 2. **Confirm the exact API of `mineru[full]==3.0.1`** by running a minimal test script or inspecting its source inside the container.
 3. **Verify that the following imports and method calls exist** and behave as documented in `design.md`:
   ```python
-  from mineru.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
-  from mineru.data.dataset import PymuDocDataset
-  from mineru.model.doc_analyze_by_custom_model import doc_analyze
+from mineru.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
+from mineru.data.dataset import PymuDocDataset
+from mineru.model.doc_analyze_by_custom_model import doc_analyze
   ```
 - If the API differs from `design.md`, update `design.md` before proceeding.
 - Document the verified API (method signatures, return types) in this task file or in `design.md`.

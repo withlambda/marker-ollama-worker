@@ -2,7 +2,6 @@ import unittest
 from pathlib import Path
 import tempfile
 import sys
-import os
 import types
 
 # Ensure project root is in sys.path

@@ -44,5 +44,5 @@ This will:
 
 ## License
 
-[GNU General Public License v3.0](LICENSE)
+[GNU General Public License v3.0](/LICENSE)
 

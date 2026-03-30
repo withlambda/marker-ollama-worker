@@ -1,8 +1,10 @@
 import os
 import unittest
-from settings import MinerUSettings, GlobalConfig
-from pathlib import Path
+
 from pydantic import ValidationError
+
+from settings import MinerUSettings
+
 
 class TestMinerUSettings(unittest.TestCase):
     def setUp(self):
