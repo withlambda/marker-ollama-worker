@@ -16,11 +16,19 @@ Task 02 (Settings) must complete before Task 03 (Handler) because the handler de
 
 ## Local Development Strategy
 
-The Dockerfile build (Task 01) may take time to stabilize. Tasks 02–05 can be developed and tested locally in parallel by installing `mineru[full]` and `paddlepaddle-gpu` in a virtual environment:
+The Dockerfile build (Task 01) may take time to stabilize. Tasks 02–05 can be developed and tested locally in parallel by installing `mineru[full]` and `paddlepaddle-gpu` in a virtual environment. 
+
+**Note on Redundant Downloads**: These dependencies are several GB. To avoid repeated downloads:
+1. Prefer running tasks inside the `markllm-mineru-test` Docker image built in Task 01.
+2. If working locally, use a persistent virtual environment.
+3. Check if dependencies are already installed before running `pip install`.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt  # after requirements.txt is updated
+# Check before install
+if ! python3 -c "import mineru; import paddle" 2>/dev/null; then
+  pip install -r requirements.txt  # after requirements.txt is updated
+fi
 ```
 
 This allows code refactoring, settings changes, and test updates to proceed without a working Docker image.

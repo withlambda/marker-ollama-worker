@@ -30,16 +30,22 @@ The following existing files must be reviewed using their exact current reposito
 
 ## Implementation Steps
 
-### 0. Prepare Real Test Dependencies
+### 0. Prepare Real Test Dependencies (Avoid Redundant Downloads)
 
-- Install runtime requirements before executing tests:
+To prevent multiple multi-GB downloads during test preparation:
+
+- **Check for existing dependencies** on the host before running `pip install`:
   ```bash
-  python -m pip install -r requirements.txt
+  if ! python3 -c "import mineru; import paddle" 2>/dev/null; then
+    python -m pip install -r requirements.txt
+  fi
+  if ! python3 -m pytest --version 2>/dev/null; then
+    python -m pip install -r test/requirements-setup.txt
+  fi
   ```
-- Install test setup dependencies:
-  ```bash
-  python -m pip install -r test/requirements-setup.txt
-  ```
+- **Prefer running tests inside the `markllm-mineru-test` container** built in Task 01:
+  - This image already contains all heavy dependencies (`mineru[full]==3.0.1`, `paddlepaddle-gpu==3.3.0`, `vllm==0.18.0`).
+  - Use `docker run --rm -v $(pwd):/app markllm-mineru-test python -m pytest test/ -v` to run the full suite.
 - Do not use dummy `sys.modules` shims for required third-party packages (`mineru`, `paddle`).
 
 ### 1. Update `test/test-handler.py`
@@ -113,9 +119,19 @@ If any of these files contain marker-pdf references, update them accordingly.
 
 ### 12. Run All Tests
 
-Run targeted migration-related tests first, then execute the full test suite to verify all tests pass:
+Run targeted migration-related tests first, then execute the full test suite. 
+
+**Option A: Inside the test container (Recommended to avoid local downloads)**:
 ```bash
-cd /app && python -m pytest test/ -v
+docker run --rm \
+  -v $(pwd):/app \
+  -v $(pwd)/test/mineru.env:/app/mineru.env \
+  markllm-mineru-test python3 -m pytest test/ -v
+```
+
+**Option B: On the host (Only if dependencies were prepared in Step 0)**:
+```bash
+python -m pytest test/ -v
 ```
 
 If any tests fail due to MinerU API differences (e.g., different return types), update behavior-level test patches and assertions accordingly.

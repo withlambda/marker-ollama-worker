@@ -24,15 +24,37 @@
 
 > **Status Update**: User confirmed `paddlepaddle-gpu==3.3.0` supports CUDA 12.6 via the `cu126` index.
 
-Before writing Dockerfile changes, capture a short proof artifact (task notes, command transcript, or build scratchpad) containing the exact commands and outputs for:
-1. Verifying that the `pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime` image (or chosen fallback) is available and contains a working PyTorch installation.
-2. Confirming that `mineru[full]==3.0.1`, `paddlepaddle-gpu==3.3.0`, and `vllm==0.18.0` can all be imported on the chosen baseline.
-3. Running a non-destructive downloader validation (`python3 /tmp/download_models_hf.py --help` or source inspection if no help entrypoint exists) to confirm the real CLI/argument contract.
-4. Determining whether the downloader requires Hugging Face authentication or writes to hard-coded paths.
-5. If `pytorch:2.10.0` is not yet available for CUDA 12.6, identifying the latest stable version that supports the full dependency set.
-6. Verifying the exact `mineru.json` schema expected by `mineru[full]==3.0.1` (inspect MinerU source or docs). Do not hardcode the JSON structure in the Dockerfile until the schema is confirmed.
+To avoid repeated multi-GB downloads during verification, perform the compatibility check using a temporary test Docker container:
 
-Do **not** bake Dockerfile assumptions around `download_models_hf.py` arguments, paths, or auth until this proof step is complete.
+1. **Create a temporary `Dockerfile.test`**:
+   - Use `FROM pytorch/pytorch:2.10.0-cuda12.6-cudnn9-runtime`.
+   - Install system dependencies: `apt-get update && apt-get install -y libgl1 libglib2.0-0 curl`.
+   - Install `mineru[full]==3.0.1` and other required packages directly in the Dockerfile using:
+     ```bash
+     pip install --break-system-packages mineru[full]==3.0.1 paddlepaddle-gpu==3.3.0 vllm==0.18.0 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+     ```
+   - Fetch the `download_models_hf.py` script and bake the models into the image to ensure a network-independent test environment.
+
+2. **Run the Test Container with a mounted shell script**:
+   - Create a shell script `test_all.sh` containing all verification commands (PyTorch check, MinerU import, `vllm` import, `mineru.json` schema inspection, etc.).
+   - Execute the test container by mounting the shell script and a results file:
+     ```bash
+     docker run --rm \
+       -v $(pwd)/test_all.sh:/test_all.sh \
+       -v $(pwd)/test_results.txt:/test_results.txt \
+       markllm-mineru-test bash /test_all.sh
+     ```
+   - The `test_all.sh` script must append all command outputs and results to `/test_results.txt`.
+
+3. **Verify the Proof Artifact**:
+   - Evaluate `test_results.txt` after the container stops. This file serves as the mandatory gate.
+   - Confirm that the `pytorch:2.10.0` image contains a working PyTorch installation.
+   - Confirm that `mineru[full]==3.0.1`, `paddlepaddle-gpu==3.3.0`, and `vllm==0.18.0` can all be imported.
+   - Inspect the real CLI/argument contract of the `download_models_hf.py` script.
+   - Determine whether the downloader requires Hugging Face authentication or writes to hard-coded paths.
+   - Verify the exact `mineru.json` schema expected by `mineru[full]==3.0.1`.
+
+Do **not** bake production Dockerfile assumptions until this proof step is complete and verified.
 
 ### 1. Update `requirements.txt`
 - Remove `marker-pdf==1.10.2`.
@@ -82,8 +104,8 @@ Do **not** bake Dockerfile assumptions around `download_models_hf.py` arguments,
 - **Update `check_dependencies.py` invocation** — this file is updated in Task 04, but ensure the `COPY` and `RUN python3 check_dependencies.py` step still works after the dependency changes.
 
 ## Test Requirements
-- The Dockerfile must build successfully (`docker build -t markllm-mineru .`).
-- The Step 0 compatibility proof is recorded and matches the final implementation choices.
+- The compatibility proof (Step 0) is recorded in `test_results.txt` via the temporary test container and matches the final implementation choices.
+- The production Dockerfile must build successfully (`docker build -t markllm-mineru .`).
 - `check_dependencies.py` must pass inside the built container (after Task 04 updates it).
 - `python3 -c "import mineru; print(mineru.__version__)"` must succeed inside the container.
 - `python3 -c "import paddle; print(paddle.__version__)"` must succeed inside the container.
