@@ -48,7 +48,7 @@ except RuntimeError:
     pass
 
 from vllm_worker import VllmWorker
-from settings import MarkerSettings, VllmSettings, GlobalConfig
+from settings import MinerUSettings, VllmSettings, GlobalConfig
 from utils import (
     check_is_dir,
     check_is_not_file,
@@ -117,7 +117,7 @@ def marker_worker_exit() -> None:
 def calculate_optimal_marker_workers(
     num_files: int,
     app_config: GlobalConfig,
-    marker_config: MarkerSettings,
+    marker_config: MinerUSettings,
 ) -> int:
     """
     Calculates the optimal number of marker worker processes based on
@@ -428,19 +428,19 @@ def extract_vllm_settings_from_job_input(
 
     return VllmSettings(app_config, **vllm_input)
 
-def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerSettings:
+def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MinerUSettings:
     """
     Extracts and validates Marker-specific settings from the RunPod job input.
-    Filters keys starting with 'marker_' and uses them to instantiate MarkerSettings.
+    Filters keys starting with 'marker_' and uses them to instantiate MinerUSettings.
 
     Args:
         job_input (Dict[str, Any]): The raw input dictionary from the RunPod job.
 
     Returns:
-        MarkerSettings: A validated configuration object for Marker.
+        MinerUSettings: A validated configuration object for MinerU.
     """
-    # Valid MarkerSettings field names (check via model_fields)
-    valid_marker_fields = set(MarkerSettings.model_fields.keys())
+    # Valid MinerUSettings field names (check via model_fields)
+    valid_marker_fields = set(MinerUSettings.model_fields.keys())
 
     marker_input = {}
     for k, v in job_input.items():
@@ -455,7 +455,7 @@ def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MarkerS
 
     # Add shared parameters
     marker_input["output_format"] = job_input.get("output_format", "markdown")
-    return MarkerSettings(**marker_input)
+    return MinerUSettings(**marker_input)
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """

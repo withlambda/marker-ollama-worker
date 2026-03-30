@@ -1,7 +1,7 @@
 """
-Configuration settings and models for the marker-vllm-worker.
+Configuration settings and models for the mineru-vllm-worker.
 This module defines the Pydantic models used to parse and validate
-environment variables and job input for global, marker, and vLLM configurations.
+environment variables and job input for global, mineru, and vLLM configurations.
 """
 import json
 import logging
@@ -152,46 +152,48 @@ class GlobalConfig(BaseSettings):
 
 
 
-class MarkerSettings(BaseSettings):
+class MinerUSettings(BaseSettings):
     """
-    Configuration for the Marker PDF processing module.
-    Settings are typically prefixed with 'MARKER_' in environment variables.
+    Configuration for the MinerU PDF processing module.
+    Settings are typically prefixed with 'MINERU_' in environment variables.
 
     Fields:
         workers (int): Number of worker processes to use for PDF conversion.
-        paginate_output (bool): Whether to paginate the output text.
-        force_ocr (bool): Force OCR on all pages.
-        disable_multiprocessing (bool): Disable internal multiprocessing of Marker.
+        ocr_mode (str): OCR mode to use ('ocr', 'txt', 'auto').
         disable_image_extraction (bool): Do not extract images from documents.
         page_range (str): Specific pages to process (e.g., "1-5,8").
-        processors (str): Comma-separated list of marker processors to run.
-        output_format (str): The format of the output (Markdown, JSON, etc.).
+        output_format (str): The format of the output (always 'markdown' for MinerU).
         vram_gb_per_worker (int): The amount of VRAM (in GB) to allocate per worker process.
         debug (bool): Enable debug mode for detailed logging.
         maxtasksperchild (int): Number of tasks each worker handles before recycling.
                                 This prevents memory leaks and VRAM accumulation.
     """
-    model_config = SettingsConfigDict(env_prefix='MARKER_', populate_by_name=True, extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='MINERU_', populate_by_name=True, extra='ignore')
 
-    workers: Optional[int] = Field(None, validation_alias="MARKER_WORKERS")
-    paginate_output: bool = Field(False, validation_alias="MARKER_PAGINATE_OUTPUT")
-    force_ocr: bool = Field(False, validation_alias="MARKER_FORCE_OCR")
-    disable_multiprocessing: bool = Field(False, validation_alias="MARKER_DISABLE_MULTIPROCESSING")
-    disable_image_extraction: bool = Field(False, validation_alias="MARKER_DISABLE_IMAGE_EXTRACTION")
-    page_range: Optional[str] = Field(None, validation_alias="MARKER_PAGE_RANGE")
-    processors: Optional[str] = Field(None, validation_alias="MARKER_PROCESSORS")
-    output_format: str = Field("markdown", validation_alias="MARKER_OUTPUT_FORMAT")
-    vram_gb_per_worker: int = Field(5, validation_alias="MARKER_VRAM_GB_PER_WORKER")
-    debug: bool = Field(False, validation_alias="MARKER_DEBUG")
-    disable_maxtasksperchild: bool = Field(False, validation_alias="MARKER_DISABLE_MAXTASKSPERCHILD")
+    workers: Optional[int] = Field(None, validation_alias="MINERU_WORKERS")
+    ocr_mode: str = Field("auto", validation_alias="MINERU_OCR_MODE")
+    disable_image_extraction: bool = Field(False, validation_alias="MINERU_DISABLE_IMAGE_EXTRACTION")
+    page_range: Optional[str] = Field(None, validation_alias="MINERU_PAGE_RANGE")
+    output_format: str = Field("markdown", validation_alias="MINERU_OUTPUT_FORMAT")
+    vram_gb_per_worker: int = Field(5, validation_alias="MINERU_VRAM_GB_PER_WORKER")
+    debug: bool = Field(False, validation_alias="MINERU_DEBUG")
+    disable_maxtasksperchild: bool = Field(False, validation_alias="MINERU_DISABLE_MAXTASKSPERCHILD")
 
     # Worker process recycling: Number of tasks each worker handles before being recycled
     # This helps prevent memory leaks and VRAM accumulation over long-running workers.
     # Disable it by setting disable_maxtasksperchild to True.
     maxtasksperchild: Optional[int] = Field(
         default_factory=lambda data: 25 if data["disable_maxtasksperchild"] is False else None,
-        validation_alias="MARKER_MAXTASKSPERCHILD"
+        validation_alias="MINERU_MAXTASKSPERCHILD"
     )
+
+    @field_validator('output_format')
+    @classmethod
+    def validate_output_format(cls, v: str) -> str:
+        """Validate that only 'markdown' is accepted for MinerU output format."""
+        if v.lower() != "markdown":
+            raise ValueError(f"MinerU only supports 'markdown' output format, got '{v}'")
+        return v.lower()
 
 
 class VllmSettings(BaseSettings):
@@ -208,7 +210,7 @@ class VllmSettings(BaseSettings):
         vllm_max_model_len (int): Maximum context/sequence length.
         vllm_max_num_seqs (int): Maximum concurrent sequences.
         vllm_startup_timeout (int): Seconds to wait for vLLM health check on startup.
-        vllm_vram_recovery_delay (int): Seconds to wait after Marker before starting vLLM.
+        vllm_vram_recovery_delay (int): Seconds to wait after MinerU before starting vLLM.
         vllm_model (str): Model name for API calls (optional, derived from vllm_model_path if not set).
         vllm_max_retries (int): Number of retries for failed API calls.
         vllm_retry_delay (float): Delay between retries in seconds.
@@ -403,7 +405,7 @@ class VllmSettings(BaseSettings):
         # Auto-compute vllm_max_num_seqs from VRAM if not explicitly provided and not on CPU
         if 'vllm_max_num_seqs' not in kwargs and max_num_seqs_from_env is None and not self.vllm_cpu:
             # Calculate how many parallel sequences fit in remaining VRAM
-            # Note: marker models are on CPU during the vLLM processing phase, so we don't subtract them
+            # Note: MinerU models are on CPU during the vLLM processing phase, so we don't subtract them
             available_vram_gb = app_config.vram_gb_total - app_config.vram_gb_reserve - self.vllm_vram_gb_model
             context_vram_gb = app_config.vram_gb_per_token_factor * self.vllm_max_model_len
             self.vllm_max_num_seqs = 1 if available_vram_gb <= 0 else max(1, int(available_vram_gb // context_vram_gb))
