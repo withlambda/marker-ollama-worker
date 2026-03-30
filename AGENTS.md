@@ -84,9 +84,9 @@ Each skill file uses the same structure:
 
 Registered skills:
 
-1. `/plan <feature-name> <feature-description>` → `.junie/skills/plan-feature/SKILL.md`
+1. `/plan <feature-name> <feature-description>` → `.junie/skills/plan/SKILL.md`
 2. `/review-plan <feature-name>` → `.junie/skills/review-plan/SKILL.md`
-3. `/execute-task <task-file-name>` → `.junie/skills/execute-task/SKILL.md`
+3. `/execute-task <plan>/<task>` → `.junie/skills/execute-task/SKILL.md`
 4. `/execute-plan <feature-name>` → `.junie/skills/execute-plan/SKILL.md`
 5. `/review-code` → `.junie/skills/review-code/SKILL.md`
 6. `/add-src-docs` → `.junie/skills/add-src-docs/SKILL.md`
