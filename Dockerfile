@@ -15,15 +15,14 @@
 
 # 1. ARG SETUP
 ARG PYTORCH_VERSION=2.10.0
-ARG CUDA_VERSION=12.8
+ARG CUDA_VERSION=12.6
 ARG CUDNN_VERSION=9
-ARG DOWNLOAD_MARKER_MODELS="false"
 ARG BASE_IMAGE=pytorch/pytorch:${PYTORCH_VERSION}-cuda${CUDA_VERSION}-cudnn${CUDNN_VERSION}-runtime
 
 # 2. BASE IMAGE
 FROM ${BASE_IMAGE}
 
-ARG DOWNLOAD_MARKER_MODELS
+ARG BASE_IMAGE
 
 # 3. ENVIRONMENT SETTINGS
 # -- Redirect caches so non-root user can read models downloaded by root --
@@ -73,7 +72,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NUMEXPR_NUM_THREADS=1 \
     CC=/usr/bin/gcc \
     PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True" \
-    NCCL_P2P_DISABLE=1
+    NCCL_P2P_DISABLE=1 \
+    MINERU_TOOLS_CONFIG_JSON="/app/mineru.json" \
+    MINERU_TOOLS_CONFIG_PATH="/app/mineru.json"
 
 # 5. APPLICATION SETUP
 WORKDIR /app
@@ -83,7 +84,8 @@ RUN mkdir -p ${XDG_CACHE_HOME} && \
     apt-get update \
     && apt-get install -y \
     poppler-utils \
-    tesseract-ocr \
+    libgl1 \
+    libglib2.0-0 \
     curl \
     zstd \
     gcc \
@@ -91,12 +93,14 @@ RUN mkdir -p ${XDG_CACHE_HOME} && \
     python3-dev \
     gosu \
     && pip install --no-cache-dir --break-system-packages pip  \
+    && pip install --no-cache-dir --break-system-packages \
+       paddlepaddle-gpu==3.3.0 \
+       -i https://www.paddlepaddle.org.cn/packages/stable/cu126/ \
     && pip install --no-cache-dir --break-system-packages --use-deprecated=legacy-resolver -r requirements.txt \
+    && huggingface-cli download opendatalab/PDF-Extract-Kit-1.0 --local-dir /app/models/mineru/pipeline \
+    && huggingface-cli download opendatalab/MinerU2.5-2509-1.2B --local-dir /app/models/mineru/vlm \
+    && python3 -c "import json; config = {'models-dir': {'pipeline': '/app/models/mineru/pipeline', 'vlm': '/app/models/mineru/vlm'}, 'config_version': '1.3.1'}; open('/app/mineru.json', 'w').write(json.dumps(config, indent=2))" \
     && python3 check_dependencies.py \
-    && python3 -c "from marker.util import assign_config, download_font; download_font();" \
-    && if [ "${DOWNLOAD_MARKER_MODELS}" = "true" ]; then \
-    	python3 -c "from marker.models import create_model_dict; create_model_dict()"; \
-    fi \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
