@@ -74,48 +74,39 @@ def _install_dependency_stubs() -> None:
     torch_mp_module.set_start_method = lambda *_args, **_kwargs: None
     sys.modules.setdefault("torch.multiprocessing", torch_mp_module)
 
-    marker_module = _make_module("marker")
-    sys.modules.setdefault("marker", marker_module)
-    sys.modules.setdefault("marker.converters", _make_module("marker.converters"))
+    mineru_module = _make_module("mineru")
+    sys.modules.setdefault("mineru", mineru_module)
+    sys.modules.setdefault("mineru.data", _make_module("mineru.data"))
 
-    marker_converters_pdf_module = _make_module("marker.converters.pdf")
+    mineru_data_reader_writer_module = _make_module("mineru.data.data_reader_writer")
 
-    class DummyPdfConverter:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
+    class DummyDataReader:
+        def __init__(self, *_args, **_kwargs) -> None: pass
+        def read(self, *_args, **_kwargs): return b""
 
-        def __call__(self, *_args, **_kwargs):
-            return None
+    class DummyDataWriter:
+        def __init__(self, *_args, **_kwargs) -> None: pass
 
-    marker_converters_pdf_module.PdfConverter = DummyPdfConverter
-    sys.modules.setdefault("marker.converters.pdf", marker_converters_pdf_module)
+    mineru_data_reader_writer_module.FileBasedDataReader = DummyDataReader
+    mineru_data_reader_writer_module.FileBasedDataWriter = DummyDataWriter
+    sys.modules.setdefault("mineru.data.data_reader_writer", mineru_data_reader_writer_module)
 
-    marker_models_module = _make_module("marker.models")
-    marker_models_module.create_model_dict = lambda: {}
-    sys.modules.setdefault("marker.models", marker_models_module)
+    mineru_dataset_module = _make_module("mineru.data.dataset")
 
-    marker_parser_module = _make_module("marker.config.parser")
+    class DummyDataset:
+        def __init__(self, *_args, **_kwargs) -> None: pass
+        def apply(self, *_args, **_kwargs): return self
+        def pipe_ocr_mode(self, *_args, **_kwargs): return self
+        def pipe_txt_mode(self, *_args, **_kwargs): return self
+        def get_markdown(self, *_args, **_kwargs): return ""
 
-    class DummyConfigParser:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
+    mineru_dataset_module.PymuDocDataset = DummyDataset
+    sys.modules.setdefault("mineru.data.dataset", mineru_dataset_module)
 
-        def generate_config_dict(self):
-            return {}
-
-        def get_processors(self):
-            return []
-
-        def get_renderer(self):
-            return None
-
-    marker_parser_module.ConfigParser = DummyConfigParser
-    sys.modules.setdefault("marker.config", _make_module("marker.config"))
-    sys.modules.setdefault("marker.config.parser", marker_parser_module)
-
-    marker_output_module = _make_module("marker.output")
-    marker_output_module.text_from_rendered = lambda *_args, **_kwargs: ("", {}, [])
-    sys.modules.setdefault("marker.output", marker_output_module)
+    mineru_model_module = _make_module("mineru.model.doc_analyze_by_custom_model")
+    mineru_model_module.doc_analyze = lambda *_args, **_kwargs: None
+    sys.modules.setdefault("mineru.model", _make_module("mineru.model"))
+    sys.modules.setdefault("mineru.model.doc_analyze_by_custom_model", mineru_model_module)
 
 
 def _import_handler_module():
@@ -164,6 +155,31 @@ class TestHandlerImageDescriptionHelpers(unittest.TestCase):
             self.assertEqual(
                 [image.name for image in images],
                 ["a-first.JPG", "middle.webp", "z-last.png"],
+            )
+
+    def test_list_extracted_images_for_output_file_nested_images(self) -> None:
+        """Should find images in 'images/' subfolder relative to output file."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            output_file = output_dir / "document.md"
+            output_file.write_text("base text", encoding="utf-8")
+
+            # Images in root
+            (output_dir / "root.png").write_bytes(b"img")
+
+            # Images in subfolder
+            images_dir = output_dir / "images"
+            images_dir.mkdir()
+            (images_dir / "nested.jpg").write_bytes(b"img")
+
+            images = handler_module.list_extracted_images_for_output_file(
+                self.app_config,
+                output_file
+            )
+
+            self.assertEqual(
+                [image.name for image in images],
+                ["nested.jpg", "root.png"],
             )
 
     def test_insert_image_descriptions_to_text_file_inserts_in_place(self) -> None:

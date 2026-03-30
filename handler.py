@@ -14,8 +14,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Main handler for the marker-vllm-worker.
-Orchestrates the conversion of documents using the marker-pdf library and
+Main handler for the mineru-vllm-worker.
+Orchestrates the conversion of documents using the MinerU library and
 optional post-processing using a vLLM-powered LLM server.
 """
 
@@ -35,10 +35,13 @@ import runpod
 import torch
 import torch.multiprocessing as mp
 
-from marker.converters.pdf import PdfConverter
-from marker.models import create_model_dict
-from marker.config.parser import ConfigParser
-from marker.output import text_from_rendered
+from mineru.data.data_reader_writer import FileBasedDataWriter, FileBasedDataReader
+from mineru.data.dataset import PymuDocDataset
+from mineru.model.doc_analyze_by_custom_model import doc_analyze
+try:
+    import paddle
+except ImportError:
+    paddle = None
 
 # Set the multiprocessing start method early (required for CUDA)
 try:
@@ -70,68 +73,79 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Process-local marker models (each worker process has its own copy)
-_MARKER_MODELS: Optional[Dict[str, Any]] = None
+# Process-local mineru state
+_MINERU_INITIALIZED: bool = False
 
 
-def marker_worker_init() -> None:
+def mineru_worker_init() -> None:
     """
-    Initializes marker models for each worker process.
-    This function is called once per worker process when the pool is created.
-    Models are loaded into VRAM and stored in process-local _MARKER_MODELS variable.
+    Initializes MinerU worker process.
+    MinerU loads models on demand based on the mineru.json configuration.
+    This function verifies the config path and registers cleanup.
     """
-    global _MARKER_MODELS
-    logger.info(f"Worker process with pid {os.getpid()} initializing marker models...")
-    _MARKER_MODELS = create_model_dict()
+    global _MINERU_INITIALIZED
+    logger.info(f"Worker process with pid {os.getpid()} initializing MinerU...")
+
+    # MinerU config path is expected via environment variable MINERU_TOOLS_CONFIG_PATH
+    config_path = os.environ.get("MINERU_TOOLS_CONFIG_PATH")
+    if config_path:
+        if not Path(config_path).exists():
+            logger.warning(f"MinerU config not found at {config_path}. Falling back to defaults.")
+        else:
+            logger.info(f"MinerU using config from {config_path}")
+    else:
+        logger.warning("MINERU_TOOLS_CONFIG_PATH not set. MinerU will use default configuration.")
+
+    _MINERU_INITIALIZED = True
 
     # Register cleanup on exit
-    atexit.register(marker_worker_exit)
+    atexit.register(mineru_worker_exit)
     logger.info(f"Worker process with pid {os.getpid()} ready")
 
 
-def marker_worker_exit() -> None:
+def mineru_worker_exit() -> None:
     """
     Cleanup function for worker processes.
-    Releases marker models and clears CUDA cache when a worker process exits.
+    Releases GPU memory for both PaddlePaddle and PyTorch.
     """
-    global _MARKER_MODELS
     try:
-        if '_MARKER_MODELS' in globals() and _MARKER_MODELS:
-            # 1. Clear the dictionary explicitly
-            _MARKER_MODELS.clear()
-            del _MARKER_MODELS
+        # 1. Clear PaddlePaddle cache if available
+        if paddle and hasattr(paddle, 'device') and hasattr(paddle.device, 'cuda') and paddle.device.cuda.is_available():
+            logger.info(f"Process {os.getpid()}: Clearing PaddlePaddle CUDA cache")
+            paddle.device.cuda.empty_cache()
 
-            # 2. Force Python GC
-            gc.collect()
+        # 2. Force Python GC
+        gc.collect()
 
-            # 3. Synchronize and clear CUDA
-            if torch.cuda.is_available():
-                torch.cuda.synchronize() # Wait for all kernels to finish
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+        # 3. Synchronize and clear PyTorch CUDA cache
+        if torch.cuda.is_available():
+            logger.info(f"Process {os.getpid()}: Clearing PyTorch CUDA cache")
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
         logger.info(f"Worker {os.getpid()} cleaned up VRAM.")
     except Exception as e:
         logger.warning(f"Error during worker cleanup: {e}")
 
-def calculate_optimal_marker_workers(
+def calculate_optimal_mineru_workers(
     num_files: int,
     app_config: GlobalConfig,
-    marker_config: MinerUSettings,
+    mineru_config: MinerUSettings,
 ) -> int:
     """
-    Calculates the optimal number of marker worker processes based on
+    Calculates the optimal number of MinerU worker processes based on
     workload and available VRAM.
 
     This function prevents GPU out-of-memory errors by ensuring that the
-    total VRAM reserved for marker processes (marker_workers * vram_gb_per_worker)
+    total VRAM reserved for MinerU processes (mineru_workers * vram_gb_per_worker)
     plus the system reserve (vram_gb_reserve) does not exceed the total
     available GPU memory.
 
     Args:
         num_files: The number of files in the current processing batch.
         app_config: Global configuration containing total VRAM and reserve.
-        marker_config: Marker-specific settings (workers override, VRAM per worker).
+        mineru_config: MinerU-specific settings (workers override, VRAM per worker).
 
     Returns:
         The number of worker processes to instantiate, bounded by workload,
@@ -139,49 +153,59 @@ def calculate_optimal_marker_workers(
     """
     # Get VRAM configuration
 
-    # Parse optimal_marker_workers
-    if marker_config.workers is not None:
-        optimal_marker_workers = max(1, marker_config.workers)
+    # Parse optimal_mineru_workers
+    if mineru_config.workers is not None:
+        optimal_mineru_workers = max(1, mineru_config.workers)
     else:
-        # Linear/Consistent scaling for marker workers
-        optimal_marker_workers = min(
+        # Linear/Consistent scaling for MinerU workers
+        optimal_mineru_workers = min(
             4,
             num_files,
-            (app_config.vram_gb_total - app_config.vram_gb_reserve) // marker_config.vram_gb_per_worker
+            (app_config.vram_gb_total - app_config.vram_gb_reserve) // mineru_config.vram_gb_per_worker
         )
 
-    optimal_marker_workers = max(1, optimal_marker_workers)
+    optimal_mineru_workers = max(1, optimal_mineru_workers)
 
-    logger.info(f"Calculated optimal marker workers for {num_files} files: "
-                f"marker={optimal_marker_workers}")
+    logger.info(f"Calculated optimal MinerU workers for {num_files} files: "
+                f"mineru={optimal_mineru_workers}")
 
-    return optimal_marker_workers
+    return optimal_mineru_workers
 
 def list_extracted_images_for_output_file(
     app_config: GlobalConfig,
     output_file_path: Path
 ) -> List[Path]:
     """
-    Lists extracted image files located next to a marker output file.
+    Lists extracted image files located next to or in an 'images/' subfolder
+    relative to a MinerU output file.
 
     Args:
         app_config (GlobalConfig): Global configuration settings.
-        output_file_path (Path): Path to the marker output text file.
+        output_file_path (Path): Path to the MinerU output text file.
 
     Returns:
-        List[Path]: Sorted image paths found in the same output directory.
+        List[Path]: Sorted image paths found in the same output directory or its 'images' subfolder.
     """
     output_dir = output_file_path.parent
     if not output_dir.exists() or not output_dir.is_dir():
         return []
 
-    return sorted(
-        [
-            path for path in output_dir.iterdir()
+    image_paths = []
+    # Check output_dir
+    image_paths.extend([
+        path for path in output_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in app_config.IMAGE_FILE_EXTENSIONS
+    ])
+
+    # Check images/ subfolder (MinerU often puts images here)
+    images_subfolder = output_dir / "images"
+    if images_subfolder.exists() and images_subfolder.is_dir():
+        image_paths.extend([
+            path for path in images_subfolder.iterdir()
             if path.is_file() and path.suffix.lower() in app_config.IMAGE_FILE_EXTENSIONS
-        ],
-        key=lambda path: path.name.lower()
-    )
+        ])
+
+    return sorted(image_paths, key=lambda path: path.name.lower())
 
 def insert_image_descriptions_to_text_file(
     app_config: GlobalConfig,
@@ -296,105 +320,117 @@ def insert_image_descriptions_to_text_file(
 
     return False
 
-def _save_marker_output(
-    app_config: GlobalConfig,
-    out_folder: Path,
-    file_stem: str,
-    full_text: str,
-    out_meta: Dict[str, Any],
-    images: Dict[str, Any],
-    output_format: str
-) -> Path:
-    """
-    Saves the converted content (text, metadata, images) to the output folder.
-
-    Args:
-        app_config (GlobalConfig): Global configuration settings.
-        out_folder (Path): The directory where output files will be saved.
-        file_stem (str): The filename without extension.
-        full_text (str): The extracted text from the document.
-        out_meta (Dict[str, Any]): Metadata from the conversion process.
-        images (Dict[str, Any]): Dictionary of image names and image objects.
-        output_format (str): The desired output format (e.g., 'markdown', 'json').
-
-    Returns:
-        Path: The path to the main output file.
-    """
-
-    extension = app_config.FORMAT_EXTENSIONS[output_format]
-    output_file = out_folder / f"{file_stem}{extension}"
-
-    # Save output in the specified format
-    output_file.write_text(full_text, encoding=app_config.FILE_ENCODING)
-
-    # Save Metadata
-    meta_file = out_folder / f"{file_stem}_meta.json"
-    meta_file.write_text(json.dumps(out_meta, indent=4), encoding=app_config.FILE_ENCODING)
-
-    # Save Images
-    for img_filename, img in images.items():
-        img.save(out_folder / img_filename)
-
-    return output_file
-
-def marker_process_single_file(
+def mineru_process_single_file(
     app_config: GlobalConfig,
     file_path: Path,
-    marker_config: Dict[str, Any],
+    mineru_config_dict: Dict[str, Any],
     output_base_path: Path,
     output_format: str
 ) -> Tuple[bool, Optional[Path]]:
     """
-    Processes a single file using the provided converter and saves the output.
-    Uses process-local marker models loaded during worker initialization.
+    Processes a single PDF file using MinerU.
+    Uses process-local MinerU components.
 
     Args:
         app_config (GlobalConfig): Global configuration settings.
-        file_path (Path): Path to the input file (e.g., .pdf, .docx).
-        marker_config (Dict[str, Any]): Configuration for the marker converter.
+        file_path (Path): Path to the input file (e.g., .pdf).
+        mineru_config_dict (Dict[str, Any]): Configuration for the MinerU converter.
         output_base_path (Path): The root directory where output for this file will be saved.
-        output_format (str): The desired output format (e.g., 'markdown', 'json').
+        output_format (str): The desired output format (must be 'markdown').
 
     Returns:
         Tuple[bool, Optional[Path]]: A tuple containing (success_boolean, output_file_path).
     """
-    global _MARKER_MODELS
+    global _MINERU_INITIALIZED
     try:
         logger.info(f"Converting {file_path.name} in process with pid {os.getpid()} ...")
-
-        # Initialize converter using process-local models
-        config_parser = ConfigParser(marker_config)
-        converter = PdfConverter(
-            config=config_parser.generate_config_dict(),
-            artifact_dict=_MARKER_MODELS,
-            processor_list=config_parser.get_processors(),
-            renderer=config_parser.get_renderer(),
-            llm_service=None  # No internal LLM service
-        )
-
-        rendered = converter(str(file_path))
-        full_text, out_meta, images = text_from_rendered(rendered)
 
         # Create a subfolder for this file's output
         file_stem = file_path.stem
         out_folder = Path(output_base_path) / file_stem
         out_folder.mkdir(parents=True, exist_ok=True)
 
-        # Save output files
-        output_file = _save_marker_output(
-            app_config,
-            out_folder,
-            file_stem,
-            full_text,
-            out_meta,
-            images,
-            output_format
-        )
+        # Initialize MinerU components
+        # Note: DataReader/Writer expect strings in some MinerU versions
+        reader = FileBasedDataReader("")
+        writer = FileBasedDataWriter(str(out_folder))
+
+        pdf_bytes = reader.read(str(file_path))
+        dataset = PymuDocDataset(pdf_bytes)
+
+        # Extract OCR mode from config
+        ocr_mode = mineru_config_dict.get("ocr_mode", "auto")
+        is_ocr_enabled = (ocr_mode != "txt")
+
+        # Layout analysis and OCR
+        infer_result = dataset.apply(doc_analyze, ocr=is_ocr_enabled)
+
+        # Pipeline execution
+        if ocr_mode == "txt":
+            pipe_result = infer_result.pipe_txt_mode(writer)
+        else:
+            pipe_result = infer_result.pipe_ocr_mode(writer)
+
+        # Generate Markdown content and trigger side-effect file writing
+        # MinerU 3.0.1 writes images and markdown to the writer's directory
+        pipe_result.get_markdown(writer)
+
+        # --- Normalize Output ---
+        # MinerU often creates a subfolder named after the stem inside our out_folder
+        # e.g., /app/output/mystem/mystem/mystem.md
+        # We want it at /app/output/mystem/mystem.md
+
+        target_md = out_folder / f"{file_stem}.md"
+
+        # Find any produced .md file in out_folder recursively
+        md_files = list(out_folder.glob("**/*.md"))
+        if not md_files:
+             logger.error(f"MinerU failed to produce any markdown file for {file_path.name} in {out_folder}")
+             return False, None
+
+        source_md = md_files[0]
+
+        if source_md != target_md:
+            # Move the MD file up to the canonical location
+            # Use replace to overwrite if it somehow already exists
+            source_md.replace(target_md)
+
+            # Check for images subfolder relative to source md
+            source_images = source_md.parent / "images"
+            target_images = out_folder / "images"
+
+            if source_images.exists() and source_images.is_dir():
+                # If target_images already exists, we might need to move contents instead of renaming folder
+                if target_images.exists():
+                    for img_file in source_images.iterdir():
+                        if img_file.is_file():
+                             img_file.replace(target_images / img_file.name)
+                    try:
+                        source_images.rmdir()
+                    except OSError:
+                        pass # Non-empty or other issue
+                else:
+                    source_images.rename(target_images)
+
+            # Cleanup empty subfolders created by MinerU
+            # Iterate through the parents of source_md until we reach out_folder
+            curr = source_md.parent
+            while curr != out_folder and curr.is_relative_to(out_folder):
+                try:
+                    curr.rmdir()
+                    curr = curr.parent
+                except OSError:
+                    break # Not empty
+
+        if not target_md.exists():
+            logger.error(f"MinerU produced markdown file but it could not be found at {target_md}")
+            return False, None
 
         logger.info(f"Finished {file_path.name}")
-        return True, output_file
+        return True, target_md
+
     except Exception as e:
-        logger.error(f"Error processing {file_path.name}: {e}")
+        logger.error(f"Error processing {file_path.name} with MinerU: {e}", exc_info=True)
         # Return False and None to allow other files in the pool to continue
         return False, None
 
@@ -428,10 +464,10 @@ def extract_vllm_settings_from_job_input(
 
     return VllmSettings(app_config, **vllm_input)
 
-def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MinerUSettings:
+def extract_mineru_settings_from_job_input(job_input: Dict[str, Any]) -> MinerUSettings:
     """
-    Extracts and validates Marker-specific settings from the RunPod job input.
-    Filters keys starting with 'marker_' and uses them to instantiate MinerUSettings.
+    Extracts and validates MinerU-specific settings from the RunPod job input.
+    Filters keys starting with 'mineru_' and uses them to instantiate MinerUSettings.
 
     Args:
         job_input (Dict[str, Any]): The raw input dictionary from the RunPod job.
@@ -440,36 +476,36 @@ def extract_marker_settings_from_job_input(job_input: Dict[str, Any]) -> MinerUS
         MinerUSettings: A validated configuration object for MinerU.
     """
     # Valid MinerUSettings field names (check via model_fields)
-    valid_marker_fields = set(MinerUSettings.model_fields.keys())
+    valid_mineru_fields = set(MinerUSettings.model_fields.keys())
 
-    marker_input = {}
+    mineru_input = {}
     for k, v in job_input.items():
-        if k.startswith("marker_"):
-            field_name = k[len("marker_"):]
-            if field_name not in valid_marker_fields:
+        if k.startswith("mineru_"):
+            field_name = k[len("mineru_"):]
+            if field_name not in valid_mineru_fields:
                 logger.warning(
-                    f"Unknown marker setting '{k}' in job input. "
-                    f"Valid fields: {sorted(valid_marker_fields)}"
+                    f"Unknown mineru setting '{k}' in job input. "
+                    f"Valid fields: {sorted(valid_mineru_fields)}"
                 )
-            marker_input[field_name] = v
+            mineru_input[field_name] = v
 
     # Add shared parameters
-    marker_input["output_format"] = job_input.get("output_format", "markdown")
-    return MinerUSettings(**marker_input)
+    mineru_input["output_format"] = job_input.get("output_format", "markdown")
+    return MinerUSettings(**mineru_input)
 
 def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     """
-    RunPod Serverless Handler for document conversion using marker-pdf and vLLM.
+    RunPod Serverless Handler for document conversion using MinerU and vLLM.
 
     This function executes the following workflow:
     1.  Initialization: Loads global configuration and initializes VRAM logging.
-    2.  Settings Extraction: Parses vLLM and Marker-specific settings from the job input.
+    2.  Settings Extraction: Parses vLLM and MinerU-specific settings from the job input.
     3.  vLLM Setup: If LLM post-processing is enabled, initializes the VllmWorker.
     4.  Path Validation: Resolves and validates input and output directories.
     5.  Resource Calculation: Determines the optimal number of worker processes based on
         available VRAM and the number of files to process.
     6.  Batch Processing: Uses a multiprocessing pool to convert files in parallel:
-        -   Each worker process loads its own copy of marker models.
+        -   Each worker process initializes MinerU components.
         -   Individual file failures are caught and logged, allowing the batch to continue.
     7.  LLM Post-processing (Optional): If enabled, starts the vLLM server as a subprocess
         and processes the converted text through the model for OCR error correction and image descriptions.
@@ -497,7 +533,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     vllm_settings: Optional[VllmSettings] = None
     if app_config.use_postprocess_llm:
         vllm_settings = extract_vllm_settings_from_job_input(app_config=app_config, job_input=job_input)
-    marker_settings = extract_marker_settings_from_job_input(job_input=job_input)
+    mineru_settings = extract_mineru_settings_from_job_input(job_input=job_input)
 
     vllm_worker: Optional[VllmWorker] = None
 
@@ -512,7 +548,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     # Get job-specific configuration
     input_dir = job_input.get('input_dir')
     output_dir = job_input.get('output_dir')
-    output_format = marker_settings.output_format
+    output_format = mineru_settings.output_format
 
     if output_format not in app_config.VALID_OUTPUT_FORMATS:
         raise ValueError(f"output_format must be one of {app_config.VALID_OUTPUT_FORMATS}")
@@ -547,18 +583,12 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
     os.makedirs(output_path, exist_ok=True)
 
-    # --- Configure Marker (Without internal LLM) ---
-    marker_config = {
-        "output_format": marker_settings.output_format,
-        "output_dir": output_path,
-        "debug": marker_settings.debug,
-        "paginate_output": marker_settings.paginate_output,
-        "force_ocr": marker_settings.force_ocr,
-        "disable_multiprocessing": marker_settings.disable_multiprocessing,
-        "disable_image_extraction": marker_settings.disable_image_extraction,
-        "page_range": marker_settings.page_range,
-        "processors": marker_settings.processors,
-        "use_llm": False # Explicitly disable Marker's internal LLM logic
+    # --- Configure MinerU ---
+    mineru_config = {
+        "ocr_mode": mineru_settings.ocr_mode,
+        "disable_image_extraction": mineru_settings.disable_image_extraction,
+        "page_range": mineru_settings.page_range,
+        "debug": mineru_settings.debug,
     }
 
     logger.info("--- Processing Job ---")
@@ -579,18 +609,18 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "success", "message": "No supported files found to process."}
 
     # --- Calculate optimal worker counts ---
-    optimal_marker_workers = calculate_optimal_marker_workers(
+    optimal_mineru_workers = calculate_optimal_mineru_workers(
         num_files=len(files_to_process),
         app_config=app_config,
-        marker_config=marker_settings,
+        mineru_config=mineru_settings,
     )
 
-    maxtasksperchild_rendered = marker_settings.maxtasksperchild if marker_settings.maxtasksperchild is not None \
+    maxtasksperchild_rendered = mineru_settings.maxtasksperchild if mineru_settings.maxtasksperchild is not None \
         else 'unlimited'
 
-    # --- Execute Marker Processing ---
+    # --- Execute MinerU Processing ---
     logger.info(f"Starting conversion for {len(files_to_process)} files "
-                f"with marker using {optimal_marker_workers} workers "
+                f"with MinerU using {optimal_mineru_workers} workers "
                 f"and {maxtasksperchild_rendered} max tasks per worker...")
     start_time = time.time()
     processed_files = [] # Paths of successfully processed output files
@@ -599,18 +629,18 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # Prepare arguments for each file
         task_args = [
-            (app_config, file_to_process, marker_config, output_path, output_format)
+            (app_config, file_to_process, mineru_config, output_path, output_format)
             for file_to_process in files_to_process
         ]
 
         # Use multiprocessing Pool with worker initialization
         with mp.Pool(
-            processes=optimal_marker_workers,
-            initializer=marker_worker_init,
-            maxtasksperchild=marker_settings.maxtasksperchild  # Recycle workers periodically to free VRAM
+            processes=optimal_mineru_workers,
+            initializer=mineru_worker_init,
+            maxtasksperchild=mineru_settings.maxtasksperchild  # Recycle workers periodically to free VRAM
         ) as pool:
             # Process files and collect results
-            results = pool.starmap(marker_process_single_file, task_args, chunksize=1)
+            results = pool.starmap(mineru_process_single_file, task_args, chunksize=1)
 
             # Separate successful results from failed ones
             for idx, (success, output_file_path) in enumerate(results):
@@ -619,22 +649,22 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
                     successful_inputs.append(files_to_process[idx])
 
         end_time = time.time()
-        logger.info(f"Marker execution took: {end_time - start_time:.2f} seconds")
+        logger.info(f"MinerU execution took: {end_time - start_time:.2f} seconds")
         gc.collect()
         torch.cuda.empty_cache()
-        log_vram_usage("After Marker")
+        log_vram_usage("After MinerU")
 
     except Exception as e:
-        logger.error(f"Unexpected error occurred during marker processing: {e}")
-        # If marker fails critically, we abort
+        logger.error(f"Unexpected error occurred during MinerU processing: {e}")
+        # If MinerU fails critically, we abort
         raise
 
-    logger.info("Marker Processing completed")
+    logger.info("MinerU Processing completed")
 
     # --- 3. vLLM LLM Post-processing (Parallel) ---
     failed_post_processing = []
     if app_config.use_postprocess_llm and vllm_worker and processed_files:
-        # Note: Marker worker processes have terminated, releasing their VRAM
+        # Note: MinerU worker processes have terminated, releasing their VRAM
         # vLLM now has full access to VRAM
         log_vram_usage("Before starting vLLM server")
 
@@ -696,11 +726,11 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
         except Exception as e:
             logger.error(f"Critical error during vLLM post-processing phase: {e}")
-            # If the vLLM phase fails critically, we still return the Marker results
+            # If the vLLM phase fails critically, we still return the MinerU results
             # but with a partially_completed status and error message.
             return {
                 "status": "partially_completed",
-                "message": f"Marker succeeded, but vLLM phase failed critically: {e}",
+                "message": f"MinerU succeeded, but vLLM phase failed critically: {e}",
                 "failures": failed_post_processing if failed_post_processing else ["vLLM_phase_crash"]
             }
 

@@ -63,11 +63,9 @@ def test_handler() -> None:
         "input": {
             "input_dir": input_dir, # Process the entire input directory
             "output_dir": output_dir,
-            "marker_workers": 1,
+            "mineru_workers": 1,
             "vllm_chunk_workers": 1,
-            "marker_paginate_output": True,
-            "marker_force_ocr": False,
-            "marker_disable_multiprocessing": True
+            "mineru_ocr_mode": "auto"
         }
     }
 
@@ -85,7 +83,7 @@ def test_handler() -> None:
         input_path = storage_bucket_path / input_dir
 
         if result.get("status") == "completed" \
-            and result.get("message") == f"All {sum(1 for _ in input_path.glob('*'))} input files of {input_path.absolute()} were processed successfully." \
+            and result.get("message") == f"All {len([f for f in input_path.iterdir() if f.is_file() and not f.name.startswith('.')])} input files from {input_path.absolute()} were processed successfully." \
             and result.get("failures") is None:
             print("\nSUCCESS: Handler completed successfully.")
 

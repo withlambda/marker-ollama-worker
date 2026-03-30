@@ -17,13 +17,12 @@ with patch.dict(sys.modules, {
     "runpod": MagicMock(),
     "torch": _make_module("torch"),
     "torch.multiprocessing": _make_module("torch.multiprocessing"),
-    "marker": MagicMock(),
-    "marker.converters": MagicMock(),
-    "marker.converters.pdf": MagicMock(),
-    "marker.models": MagicMock(),
-    "marker.config": MagicMock(),
-    "marker.config.parser": MagicMock(),
-    "marker.output": MagicMock(),
+    "mineru": MagicMock(),
+    "mineru.data": MagicMock(),
+    "mineru.data.data_reader_writer": MagicMock(),
+    "mineru.data.dataset": MagicMock(),
+    "mineru.model": MagicMock(),
+    "mineru.model.doc_analyze_by_custom_model": MagicMock(),
 }):
     from utils import LanguageProcessor
 

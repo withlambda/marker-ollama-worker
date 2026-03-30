@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Script to run local tests for the Dockerized Marker-PDF solution (RunPod Serverless).
+# Script to run local tests for the Dockerized MinerU solution (RunPod Serverless).
 #
 # This script performs the following actions:
 # 1. Sets up a build test directory and copies necessary files.
@@ -40,7 +40,7 @@ BUILD_TEST_DIR="${PARENT_OF_SCRIPT_DIR}/build/test"
 export TEST_INPUT_DIR="${BUILD_TEST_DIR}/test-data/input"
 export TEST_OUTPUT_DIR="${BUILD_TEST_DIR}/test-data/output"
 
-DOCKER_CONTAINER="marker-with-vllm-test"
+DOCKER_CONTAINER="mineru-with-vllm-test"
 
 rm -rf "${BUILD_TEST_DIR}" && mkdir -p "${BUILD_TEST_DIR}"
 
@@ -111,7 +111,7 @@ docker_run_cmd+=("docker run --rm")
 docker_run_cmd+=("--name ${DOCKER_CONTAINER}")
 docker_run_cmd+=("--shm-size=4gb")
 docker_run_cmd+=("--env-file custom.env")
-docker_run_cmd+=("--env-file marker.env")
+docker_run_cmd+=("--env-file mineru.env")
 #docker_run_cmd+=("--env-file surya.env")
 docker_run_cmd+=("--env-file tools.env")
 docker_run_cmd+=("-e STRICT_MODE=True")
