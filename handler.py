@@ -68,8 +68,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Process-local mineru state
-_MINERU_INITIALIZED: bool = False
 
 
 def mineru_worker_init() -> None:
@@ -78,7 +76,6 @@ def mineru_worker_init() -> None:
     MinerU loads models on demand based on the mineru.json configuration.
     This function verifies the config path and registers cleanup.
     """
-    global _MINERU_INITIALIZED
     logger.info(f"Worker process with pid {os.getpid()} initializing MinerU...")
 
     # MinerU config path is expected via environment variable MINERU_TOOLS_CONFIG_PATH
@@ -90,8 +87,6 @@ def mineru_worker_init() -> None:
             logger.info(f"MinerU using config from {config_path}")
     else:
         logger.warning("MINERU_TOOLS_CONFIG_PATH not set. MinerU will use default configuration.")
-
-    _MINERU_INITIALIZED = True
 
     # Register cleanup on exit
     atexit.register(mineru_worker_exit)
@@ -358,7 +353,6 @@ def mineru_process_single_file(
     Returns:
         Tuple[bool, Optional[Path]]: A tuple containing (success_boolean, output_file_path).
     """
-    global _MINERU_INITIALIZED
     try:
         logger.info(f"Converting {file_path.name} in process with pid {os.getpid()} ...")
 
