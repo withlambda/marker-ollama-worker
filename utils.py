@@ -14,25 +14,24 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Utility functions and classes for the marker-vllm-worker.
+Utility functions and classes for the mineru-vllm-worker.
 Includes environment configuration, resource management (VRAM),
 and path validation utilities.
 """
 
-import math
 import logging
+import math
 import os
-from PIL import Image
-from transformers import AutoConfig, AutoTokenizer
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Tuple, Union, Optional
+from typing import Any, Dict, Union, Optional
 
+from PIL import Image
 from huggingface_hub import try_to_load_from_cache, _CACHED_NO_EXIST
-
 from langdetect import detect, DetectorFactory
 from langdetect.lang_detect_exception import LangDetectException
+from transformers import AutoConfig, AutoTokenizer
 
 from settings import GlobalConfig
 

@@ -2,7 +2,7 @@
 # exec-model-download.sh - Orchestrates the model download process.
 #
 # This script builds a Docker image with Hugging Face tools and runs it
-# to download marker and vLLM models into the local cache.
+# to download MinerU and vLLM models into the local cache.
 #
 # Copyright (C) 2026 withLambda
 #
@@ -28,7 +28,7 @@ set -e
 #
 # Configuration:
 #   - DOCKER_FILE_NAME: The Dockerfile to use (huggingface-hub.dockerfile).
-#   - MODELS_FILES: A comma-separated list of files containing model IDs (marker-models.txt, vllm-models.txt).
+#   - MODELS_FILES: A comma-separated list of files containing model IDs vllm-models.txt.
 #   - ENV_FILE_PATH: Optional path to an environment file (e.g., for HF_TOKEN).
 #
 # Output:
@@ -38,7 +38,7 @@ SCRIPT_DIR=$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)
 DOCKER_FILE_NAME="huggingface-hub.dockerfile"
 DOCKER_IMAGE_NAME="hf_hub"
 # Files with models to download, comma separated
-MODELS_FILES="marker-models.txt,vllm-models.txt"
+MODELS_FILES="vllm-models.txt"
 ENV_FILE_PATH="${SCRIPT_DIR}/.private.env"
 
 ENV_FILE_ARG=""

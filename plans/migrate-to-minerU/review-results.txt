@@ -1,0 +1,56 @@
+
+=== Dependency check ===
+--- Starting Dependency Check ---
+✅ Success: 'psutil' imported.
+✅ Success: 'requests' imported.
+✅ Success: 'mineru' imported.
+/usr/local/lib/python3.11/site-packages/paddle/utils/cpp_extension/extension_utils.py:712: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+✅ Success: 'paddle' imported.
+✅ Success: 'shapely' imported.
+✅ Success: 'runpod' imported.
+✅ Success: 'openai' imported.
+✅ Success: 'httpx' imported.
+✅ Success: 'tiktoken' imported.
+✅ Success: 'vllm' imported.
+✅ Success: 'pydantic' imported.
+✅ Success: 'pydantic_settings' imported.
+✅ Success: 'cv2' imported.
+✅ Success: 'starlette' imported.
+✅ Success: 'numpy' imported.
+✅ Success: 'google.protobuf' imported.
+✅ Success: 'filelock' imported.
+✅ Success: 'cuda' imported.
+Checking vLLM entrypoint imports ('python3 -c "import vllm.entrypoints.openai.api_server"')...
+✅ Success: vLLM entrypoint imports are working.
+---------------------------------
+🎉 All critical dependencies are verified!
+
+=== Pytest suite ===
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.0.2, pluggy-1.6.0
+rootdir: /workspace
+plugins: anyio-4.13.0, langsmith-0.7.22
+collected 79 items
+
+test/test_handler_end_to_end_language.py .                               [  1%]
+test/test_handler_image_description_helpers.py .......                   [ 10%]
+test/test_handler_language_inference.py ........                         [ 20%]
+test/test_handler_settings_extraction.py .....                           [ 26%]
+test/test_regression_mineru.py ..                                        [ 29%]
+test/test_settings.py ......                                             [ 36%]
+test/test_vllm_settings.py .....................................         [ 83%]
+test/test_vllm_worker_chunking.py ..                                     [ 86%]
+test/test_vllm_worker_event_loop.py ..                                   [ 88%]
+test/test_vllm_worker_language_aware.py ..                               [ 91%]
+test/test_vllm_worker_token_budget.py .......                            [100%]
+
+=============================== warnings summary ===============================
+../usr/local/lib/python3.11/site-packages/paddle/utils/cpp_extension/extension_utils.py:712
+  /usr/local/lib/python3.11/site-packages/paddle/utils/cpp_extension/extension_utils.py:712: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+    warnings.warn(warning_message)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 79 passed, 1 warning in 13.25s ========================
+
+=== Review verification completed ===

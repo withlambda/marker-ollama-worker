@@ -1,7 +1,7 @@
 """
-Configuration settings and models for the marker-vllm-worker.
+Configuration settings and models for the mineru-vllm-worker.
 This module defines the Pydantic models used to parse and validate
-environment variables and job input for global, marker, and vLLM configurations.
+environment variables and job input for global, mineru, and vLLM configurations.
 """
 import json
 import logging
@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Optional, ClassVar, Set, Any
 
-from pydantic import Field, DirectoryPath, field_validator, model_validator, AliasChoices
+from pydantic import Field, DirectoryPath, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -152,46 +152,48 @@ class GlobalConfig(BaseSettings):
 
 
 
-class MarkerSettings(BaseSettings):
+class MinerUSettings(BaseSettings):
     """
-    Configuration for the Marker PDF processing module.
-    Settings are typically prefixed with 'MARKER_' in environment variables.
+    Configuration for the MinerU PDF processing module.
+    Settings are typically prefixed with 'MINERU_' in environment variables.
 
     Fields:
         workers (int): Number of worker processes to use for PDF conversion.
-        paginate_output (bool): Whether to paginate the output text.
-        force_ocr (bool): Force OCR on all pages.
-        disable_multiprocessing (bool): Disable internal multiprocessing of Marker.
+        ocr_mode (str): OCR mode to use ('ocr', 'txt', 'auto').
         disable_image_extraction (bool): Do not extract images from documents.
         page_range (str): Specific pages to process (e.g., "1-5,8").
-        processors (str): Comma-separated list of marker processors to run.
-        output_format (str): The format of the output (Markdown, JSON, etc.).
+        output_format (str): The format of the output (always 'markdown' for MinerU).
         vram_gb_per_worker (int): The amount of VRAM (in GB) to allocate per worker process.
         debug (bool): Enable debug mode for detailed logging.
         maxtasksperchild (int): Number of tasks each worker handles before recycling.
                                 This prevents memory leaks and VRAM accumulation.
     """
-    model_config = SettingsConfigDict(env_prefix='MARKER_', populate_by_name=True, extra='ignore')
+    model_config = SettingsConfigDict(env_prefix='MINERU_', populate_by_name=True, extra='ignore')
 
-    workers: Optional[int] = Field(None, validation_alias="MARKER_WORKERS")
-    paginate_output: bool = Field(False, validation_alias="MARKER_PAGINATE_OUTPUT")
-    force_ocr: bool = Field(False, validation_alias="MARKER_FORCE_OCR")
-    disable_multiprocessing: bool = Field(False, validation_alias="MARKER_DISABLE_MULTIPROCESSING")
-    disable_image_extraction: bool = Field(False, validation_alias="MARKER_DISABLE_IMAGE_EXTRACTION")
-    page_range: Optional[str] = Field(None, validation_alias="MARKER_PAGE_RANGE")
-    processors: Optional[str] = Field(None, validation_alias="MARKER_PROCESSORS")
-    output_format: str = Field("markdown", validation_alias="MARKER_OUTPUT_FORMAT")
-    vram_gb_per_worker: int = Field(5, validation_alias="MARKER_VRAM_GB_PER_WORKER")
-    debug: bool = Field(False, validation_alias="MARKER_DEBUG")
-    disable_maxtasksperchild: bool = Field(False, validation_alias="MARKER_DISABLE_MAXTASKSPERCHILD")
+    workers: Optional[int] = Field(None, validation_alias="MINERU_WORKERS")
+    ocr_mode: str = Field("auto", validation_alias="MINERU_OCR_MODE")
+    disable_image_extraction: bool = Field(False, validation_alias="MINERU_DISABLE_IMAGE_EXTRACTION")
+    page_range: Optional[str] = Field(None, validation_alias="MINERU_PAGE_RANGE")
+    output_format: str = Field("markdown", validation_alias="MINERU_OUTPUT_FORMAT")
+    vram_gb_per_worker: int = Field(5, validation_alias="MINERU_VRAM_GB_PER_WORKER")
+    debug: bool = Field(False, validation_alias="MINERU_DEBUG")
+    disable_maxtasksperchild: bool = Field(False, validation_alias="MINERU_DISABLE_MAXTASKSPERCHILD")
 
     # Worker process recycling: Number of tasks each worker handles before being recycled
     # This helps prevent memory leaks and VRAM accumulation over long-running workers.
     # Disable it by setting disable_maxtasksperchild to True.
     maxtasksperchild: Optional[int] = Field(
         default_factory=lambda data: 25 if data["disable_maxtasksperchild"] is False else None,
-        validation_alias="MARKER_MAXTASKSPERCHILD"
+        validation_alias="MINERU_MAXTASKSPERCHILD"
     )
+
+    @field_validator('output_format')
+    @classmethod
+    def validate_output_format(cls, v: str) -> str:
+        """Validate that only 'markdown' is accepted for MinerU output format."""
+        if v.lower() != "markdown":
+            raise ValueError(f"MinerU only supports 'markdown' output format, got '{v}'")
+        return v.lower()
 
 
 class VllmSettings(BaseSettings):
@@ -208,7 +210,7 @@ class VllmSettings(BaseSettings):
         vllm_max_model_len (int): Maximum context/sequence length.
         vllm_max_num_seqs (int): Maximum concurrent sequences.
         vllm_startup_timeout (int): Seconds to wait for vLLM health check on startup.
-        vllm_vram_recovery_delay (int): Seconds to wait after Marker before starting vLLM.
+        vllm_vram_recovery_delay (int): Seconds to wait after MinerU before starting vLLM.
         vllm_model (str): Model name for API calls (optional, derived from vllm_model_path if not set).
         vllm_max_retries (int): Number of retries for failed API calls.
         vllm_retry_delay (float): Delay between retries in seconds.
@@ -236,123 +238,123 @@ class VllmSettings(BaseSettings):
     # Required fields
     vllm_model_path: Optional[DirectoryPath] = Field(
         None,
-        validation_alias="MARKLLM_VLLM_MODEL_PATH"
+        validation_alias="NOTELM_VLLM_MODEL_PATH"
     )
     vllm_vram_gb_model: int = Field(
         ...,
-        validation_alias="MARKLLM_VLLM_VRAM_GB_MODEL"
+        validation_alias="NOTELM_VLLM_VRAM_GB_MODEL"
     )
 
     # Server configuration
-    vllm_host: str = Field("127.0.0.1", validation_alias="MARKLLM_VLLM_HOST")
-    vllm_port: int = Field(8001, validation_alias="MARKLLM_VLLM_PORT")
+    vllm_host: str = Field("127.0.0.1", validation_alias="NOTELM_VLLM_HOST")
+    vllm_port: int = Field(8001, validation_alias="NOTELM_VLLM_PORT")
     vllm_gpu_util: float = Field(
         0.85,
-        validation_alias="MARKLLM_VLLM_GPU_UTIL"
+        validation_alias="NOTELM_VLLM_GPU_UTIL"
     )
     vllm_max_model_len: int = Field(
         16384,
-        validation_alias="MARKLLM_VLLM_MAX_MODEL_LEN"
+        validation_alias="NOTELM_VLLM_MAX_MODEL_LEN"
     )
     vllm_max_num_seqs: int = Field(
         16,
-        validation_alias="MARKLLM_VLLM_MAX_NUM_SEQS"
+        validation_alias="NOTELM_VLLM_MAX_NUM_SEQS"
     )
     vllm_startup_timeout: int = Field(
         120,
-        validation_alias="MARKLLM_VLLM_STARTUP_TIMEOUT",
+        validation_alias="NOTELM_VLLM_STARTUP_TIMEOUT",
     )
     vllm_vram_recovery_delay: int = Field(
         10,
-        validation_alias="MARKLLM_VLLM_VRAM_RECOVERY_DELAY"
+        validation_alias="NOTELM_VLLM_VRAM_RECOVERY_DELAY"
     )
 
     # Model selection
     vllm_model: Optional[str] = Field(
         None,
-        validation_alias="MARKLLM_VLLM_MODEL"
+        validation_alias="NOTELM_VLLM_MODEL"
     )
 
     # Processing configuration
     vllm_max_retries: int = Field(
         3,
-        validation_alias="MARKLLM_VLLM_MAX_RETRIES"
+        validation_alias="NOTELM_VLLM_MAX_RETRIES"
     )
     vllm_retry_delay: float = Field(
         2.0,
-        validation_alias="MARKLLM_VLLM_RETRY_DELAY"
+        validation_alias="NOTELM_VLLM_RETRY_DELAY"
     )
     vllm_chunk_size: int = Field(
         default_factory=lambda data: data["vllm_max_model_len"] // 2,
-        validation_alias="MARKLLM_VLLM_CHUNK_SIZE"
+        validation_alias="NOTELM_VLLM_CHUNK_SIZE"
     )
     vllm_chunk_workers: int = Field(
         16,
-        validation_alias="MARKLLM_VLLM_CHUNK_WORKERS"
+        validation_alias="NOTELM_VLLM_CHUNK_WORKERS"
     )
     vllm_shutdown_grace_period: int = Field(
         10,
-        validation_alias="MARKLLM_VLLM_SHUTDOWN_GRACE_PERIOD"
+        validation_alias="NOTELM_VLLM_SHUTDOWN_GRACE_PERIOD"
     )
     vllm_health_check_interval: float = Field(
         2.0,
-        validation_alias="MARKLLM_VLLM_HEALTH_CHECK_INTERVAL"
+        validation_alias="NOTELM_VLLM_HEALTH_CHECK_INTERVAL"
     )
     vllm_chat_completion_token_safety_margin: int = Field(
         50,
-        validation_alias="MARKLLM_VLLM_CHAT_COMPLETION_TOKEN_SAFETY_MARGIN"
+        validation_alias="NOTELM_VLLM_CHAT_COMPLETION_TOKEN_SAFETY_MARGIN"
     )
     vllm_tiktoken_encoding_name: str = Field(
         "gpt2",
-        validation_alias="MARKLLM_VLLM_TIKTOKEN_ENCODING_NAME"
+        validation_alias="NOTELM_VLLM_TIKTOKEN_ENCODING_NAME"
     )
     vllm_min_completion_tokens: int = Field(
         1,
-        validation_alias="MARKLLM_VLLM_MIN_COMPLETION_TOKENS"
+        validation_alias="NOTELM_VLLM_MIN_COMPLETION_TOKENS"
     )
     vllm_image_description_max_tokens: int = Field(
         1024,
-        validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_MAX_TOKENS"
+        validation_alias="NOTELM_VLLM_IMAGE_DESCRIPTION_MAX_TOKENS"
     )
 
     # Prompt configuration
     vllm_block_correction_prompt_key: Optional[str] = Field(
         None,
-        validation_alias="MARKLLM_VLLM_BLOCK_CORRECTION_PROMPT_KEY"
+        validation_alias="NOTELM_VLLM_BLOCK_CORRECTION_PROMPT_KEY"
     )
     vllm_block_correction_prompt: Optional[str] = Field(
         None,
-        validation_alias="MARKLLM_VLLM_BLOCK_CORRECTION_PROMPT"
+        validation_alias="NOTELM_VLLM_BLOCK_CORRECTION_PROMPT"
     )
     vllm_image_description_prompt: Optional[str] = Field(
         None,
-        validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_PROMPT"
+        validation_alias="NOTELM_VLLM_IMAGE_DESCRIPTION_PROMPT"
     )
-    vllm_cpu: bool = Field(False, validation_alias="MARKLLM_VLLM_CPU")
+    vllm_cpu: bool = Field(False, validation_alias="NOTELM_VLLM_CPU")
 
     # Force temperature to 0 for deterministic OCR correction
     vllm_temperature_text_chunk_correction: float = Field(
-        0.0, validation_alias="MARKLLM_VLLM_TEMPERATURE_TEXT_CHUNK_CORRECTION"
+        0.0, validation_alias="NOTELM_VLLM_TEMPERATURE_TEXT_CHUNK_CORRECTION"
     )
 
     # Force temperature to 0 for deterministic image description generation
     vllm_temperature_image_description: float = Field(
-        0.0, validation_alias="MARKLLM_VLLM_TEMPERATURE_IMAGE_DESCRIPTION"
+        0.0, validation_alias="NOTELM_VLLM_TEMPERATURE_IMAGE_DESCRIPTION"
     )
 
     vllm_chunk_output_formatting_instruction: str = Field(
         default_factory=lambda : VllmSettings.output_formatting_instruction_template("The corrected Markdown text goes here"),
-        validation_alias="MARKLLM_VLLM_CHUNK_OUTPUT_FORMATTING_INSTRUCTION"
+        validation_alias="NOTELM_VLLM_CHUNK_OUTPUT_FORMATTING_INSTRUCTION"
     )
 
     vllm_chunk_user_prompt_init: str = Field(
         "### TEXT TO PROCESS:\n",
-        validation_alias="MARKLLM_VLLM_CHUNK_USER_PROMPT_INIT"
+        validation_alias="NOTELM_VLLM_CHUNK_USER_PROMPT_INIT"
     )
 
     vllm_image_description_output_formatting_instruction: str = Field(
         default_factory=lambda : VllmSettings.output_formatting_instruction_template("The image description text goes here"),
-        validation_alias="MARKLLM_VLLM_IMAGE_DESCRIPTION_OUTPUT_FORMATTING_INSTRUCTION"
+        validation_alias="NOTELM_VLLM_IMAGE_DESCRIPTION_OUTPUT_FORMATTING_INSTRUCTION"
     )
 
     vllm_chunk_structural_markdown_instructions: str = Field(
@@ -364,7 +366,7 @@ class VllmSettings(BaseSettings):
                 - Keep image syntax like ![](_page_1_Picture_5.jpeg) exactly as is.
             - Hyphenation: Merge words split by line-break hyphens unless the hyphen is part of the archaic compound style.
         """,
-        validation_alias="MARKLLM_VLLM_CHUNK_STRUCTURAL_MARKDOWN_INSTRUCTIONS"
+        validation_alias="NOTELM_VLLM_CHUNK_STRUCTURAL_MARKDOWN_INSTRUCTIONS"
     )
 
 
@@ -376,7 +378,7 @@ class VllmSettings(BaseSettings):
             },
             "required": ["text"]
         },
-        validation_alias="MARKLLM_VLLM_OUTPUT_JSON_SCHEMA"
+        validation_alias="NOTELM_VLLM_OUTPUT_JSON_SCHEMA"
     )
 
     def __init__(
@@ -393,7 +395,7 @@ class VllmSettings(BaseSettings):
         """
         # Capture env var state before super().__init__(), because model validators
         # make the post-init auto-calc check always see the sequence cap as already set.
-        max_num_seqs_from_env = os.environ.get('MARKLLM_VLLM_MAX_NUM_SEQS')
+        max_num_seqs_from_env = os.environ.get('NOTELM_VLLM_MAX_NUM_SEQS')
 
         super().__init__(**kwargs)
 
@@ -403,7 +405,7 @@ class VllmSettings(BaseSettings):
         # Auto-compute vllm_max_num_seqs from VRAM if not explicitly provided and not on CPU
         if 'vllm_max_num_seqs' not in kwargs and max_num_seqs_from_env is None and not self.vllm_cpu:
             # Calculate how many parallel sequences fit in remaining VRAM
-            # Note: marker models are on CPU during the vLLM processing phase, so we don't subtract them
+            # Note: MinerU models are on CPU during the vLLM processing phase, so we don't subtract them
             available_vram_gb = app_config.vram_gb_total - app_config.vram_gb_reserve - self.vllm_vram_gb_model
             context_vram_gb = app_config.vram_gb_per_token_factor * self.vllm_max_model_len
             self.vllm_max_num_seqs = 1 if available_vram_gb <= 0 else max(1, int(available_vram_gb // context_vram_gb))
@@ -473,8 +475,8 @@ class VllmSettings(BaseSettings):
         """
         Ensure the vLLM model name is set.
 
-        If MARKLLM_VLLM_MODEL is not explicitly provided, it is derived from the
-        last component of the MARKLLM_VLLM_MODEL_PATH (e.g., /path/to/Llama-3-8B -> Llama-3-8B).
+        If NOTELM_VLLM_MODEL is not explicitly provided, it is derived from the
+        last component of the NOTELM_VLLM_MODEL_PATH (e.g., /path/to/Llama-3-8B -> Llama-3-8B).
         This name is required for API calls to the vLLM server.
 
         Raises:
@@ -488,10 +490,10 @@ class VllmSettings(BaseSettings):
                 logger.info(f"Derived vllm_model='{self.vllm_model}' from vllm_model_path")
             else:
                 raise ValueError(
-                    "MARKLLM_VLLM_MODEL must be set explicitly or be derivable from MARKLLM_VLLM_MODEL_PATH. "
+                    "NOTELM_VLLM_MODEL must be set explicitly or be derivable from NOTELM_VLLM_MODEL_PATH. "
                     "Could not derive a model name from the provided model path."
                 )
 
         if not self.vllm_model:
-            raise ValueError("MARKLLM_VLLM_MODEL must be set explicitly or be derivable from MARKLLM_VLLM_MODEL_PATH.")
+            raise ValueError("NOTELM_VLLM_MODEL must be set explicitly or be derivable from NOTELM_VLLM_MODEL_PATH.")
         return self

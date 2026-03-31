@@ -1,5 +1,5 @@
 ---
-name: plan-feature
+name: plan
 description: Creates structured feature plans with requirements, design, and executable tasks under plans/<feature-name>/.
 ---
 

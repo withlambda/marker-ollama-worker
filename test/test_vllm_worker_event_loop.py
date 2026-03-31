@@ -31,8 +31,8 @@ def _make_worker() -> VllmWorker:
 
     os.environ["VOLUME_ROOT_MOUNT_PATH"]="/tmp"
     os.environ["VRAM_GB_TOTAL"]="24"
-    os.environ["MARKLLM_VLLM_VRAM_GB_MODEL"]="4"
-    os.environ["MARKLLM_VLLM_MODEL"]="model"
+    os.environ["NOTELM_VLLM_VRAM_GB_MODEL"]="4"
+    os.environ["NOTELM_VLLM_MODEL"]="model"
     settings = VllmSettings(app_config=GlobalConfig(
     ))
 

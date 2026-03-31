@@ -43,6 +43,16 @@ When generating or modifying code, the agent must ensure:
    - Keep `README.md` current for significant behavioral or configuration changes.
    - Ensure `README.md` includes project purpose, installation, usage/testing, and deployment-relevant details where applicable.
    - Before editing `README.md`, re-read its latest content to preserve manual user additions/removals.
+5. **Functional Style**:
+   - Follow an immutable functional style when possible, ensuring it does not increase code complexity.
+6. **Error Handling**:
+   - Avoid useless `except: pass` blocks.
+   - Catch specific exceptions instead of a general `Exception` whenever they can be inferred.
+   - All caught exceptions MUST be logged with the appropriate context.
+7. **Import Management**:
+   - Regularly check and remove unused imports.
+8. **Formatting**:
+   - Code formatting MUST strictly obey the rules defined in `.editorconfig`.
 
 ### 3) Dependencies in Source Code and Tests
 
@@ -74,15 +84,16 @@ Each skill file uses the same structure:
 
 Registered skills:
 
-1. `/plan <feature-name> <feature-description>` → `.junie/skills/plan-feature/SKILL.md`
+1. `/plan <feature-name> <feature-description>` → `.junie/skills/plan/SKILL.md`
 2. `/review-plan <feature-name>` → `.junie/skills/review-plan/SKILL.md`
-3. `/execute-task <task-file-name>` → `.junie/skills/execute-task/SKILL.md`
+3. `/execute-task <plan>/<task>` → `.junie/skills/execute-task/SKILL.md`
 4. `/execute-plan <feature-name>` → `.junie/skills/execute-plan/SKILL.md`
-5. `/review-code` → `.junie/skills/review-code/SKILL.md`
-6. `/add-src-docs` → `.junie/skills/add-src-docs/SKILL.md`
-7. `/update-src-docs` → `.junie/skills/update-src-docs/SKILL.md`
-8. `/update-readme` → `.junie/skills/update-readme/SKILL.md`
-9. `/review-all` → `.junie/skills/review-all/SKILL.md`
+5. `/review-plan-implementation <plan>` → `.junie/skills/review-plan-implementation/SKILL.md`
+6. `/review-code` → `.junie/skills/review-code/SKILL.md`
+7. `/add-src-docs` → `.junie/skills/add-src-docs/SKILL.md`
+8. `/update-src-docs` → `.junie/skills/update-src-docs/SKILL.md`
+9. `/update-readme` → `.junie/skills/update-readme/SKILL.md`
+10. `/review-all` → `.junie/skills/review-all/SKILL.md`
 
 **Key principle for `/review-all`**: It is a review-and-implement workflow, not review-only. Identified improvements must be applied directly.
 

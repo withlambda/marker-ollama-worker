@@ -5,7 +5,7 @@ description: Executes a single task from a feature plan, validates outcomes, and
 
 # Execute Task
 
-Use this skill when the user requests `/execute-task <task-file-name>`.
+Use this skill when the user requests `/execute-task <plan>/<task>`.
 
 ## Guardrail Binding
 
@@ -13,23 +13,24 @@ Use this skill when the user requests `/execute-task <task-file-name>`.
 
 ## Inputs
 
-- `task-file-name`: The file name of the task (e.g., `01-task-name.md`). It is assumed to be located in the current or relevant plan directory.
+- `plan`: The name of the plan directory under `plans/`.
+- `task`: The file name of the specific task (e.g., `01-task-name.md`) within the plan directory.
 
 ## Preconditions
 
-- The task file exists.
-- `requirements.md` in the same plan directory exists.
+- The task file exists at `plans/<plan>/<task>`.
+- `requirements.md` exists in the `plans/<plan>/` directory.
 - Dependencies listed in the task file have been executed (if applicable).
 
 ## Procedure
 
-1. Read the task file to understand the task description, ordering, dependencies, and test requirements.
-2. Verify that dependencies are already implemented (e.g., by checking codebase or previous `IMPLEMENTED.md` if any).
+1. Read the task file `plans/<plan>/<task>` to understand the task description, ordering, dependencies, and test requirements.
+2. Verify that dependencies are already implemented (e.g., by checking codebase or previous `IMPLEMENTED.md` in `plans/<plan>/` if any).
 3. Execute the implementation steps defined in the task file.
 4. Implement and run task-level tests as specified.
-5. If the task is the last one in the plan (based on ordering numbers of all task files in the plan directory):
+5. If the task is the last one in the plan (based on ordering numbers of all task files in the `plans/<plan>/` directory):
    - Run the full test suite after implementation.
-   - Create `IMPLEMENTED.md` in the plan directory with:
+   - Create `IMPLEMENTED.md` in the `plans/<plan>/` directory with:
      - Implementation summary
      - New/modified file list
      - Deviations and rationale
@@ -39,7 +40,7 @@ Use this skill when the user requests `/execute-task <task-file-name>`.
 ## Outputs/Artifacts
 
 - Code/test/doc updates.
-- `plans/<feature-name>/IMPLEMENTED.md` (only if the last task).
+- `plans/<plan>/IMPLEMENTED.md` (only if the last task).
 
 ## Validation
 
